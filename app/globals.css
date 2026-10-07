@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: #FAF9F7;
+  color: #26231F;
+  -webkit-font-smoothing: antialiased;
+}
+
+.panel {
+  @apply rounded-2xl border border-ash-200 bg-white;
+}
+
+.panel-title {
+  @apply text-[13px] font-medium tracking-wide text-ash-600;
+}
+
+.slider {
+  @apply h-1.5 w-full cursor-pointer appearance-none rounded-full bg-ash-200;
+}
+
+.slider::-webkit-slider-thumb {
+  @apply h-4 w-4 cursor-pointer appearance-none rounded-full bg-ember-500;
+  box-shadow: 0 0 0 3px rgba(246, 92, 10, 0.15);
+}
+
+.btn {
+  @apply inline-flex items-center justify-center gap-1.5 rounded-xl px-3.5 py-2 text-[13px] font-medium transition;
+}
+
+.btn-primary {
+  @apply bg-ember-500 text-white hover:bg-ember-600;
+}
+
+.btn-ghost {
+  @apply border border-ash-200 bg-white text-ash-700 hover:bg-ash-50;
+}
+
+.btn-ghost:disabled {
+  @apply cursor-not-allowed opacity-40;
+}
+
+.chip {
+  @apply inline-flex items-center gap-1.5 rounded-lg border border-ash-200 bg-white px-2.5 py-1.5 text-[12.5px] text-ash-700 transition;
+}
+
+.chip-active {
+  @apply border-ember-400 bg-ember-50 text-ember-700;
+}

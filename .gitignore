@@ -1,0 +1,14 @@
+node_modules/
+.next/
+out/
+build/
+.DS_Store
+*.pem
+npm-debug.log*
+.env*
+!.env.example
+next-env.d.ts
+*.tsbuildinfo
+
+# 验证/调试脚手架，不属于项目本体
+.verify3/
