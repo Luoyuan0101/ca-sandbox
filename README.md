@@ -7,6 +7,42 @@
 
 ---
 
+## Members & Progress
+
+> Members and current status, as required by the course conventions.
+> Everything below this section is written in Chinese, because the sandbox is
+> used in class by Chinese-speaking students and the in-app wording has to match.
+> The project review in [`plan.md`](plan.md) is written in English.
+
+**Project:** a cellular-automata sandbox for wildfire spread. The goal is not to
+predict a specific real fire, but to make one question testable: *does attacking
+a fire early matter, and by how much?*
+
+| Member | GitHub username | Role |
+|---|---|---|
+| 郭俊辰 | [@Luoyuan0101](https://github.com/Luoyuan0101) | Sole author — model, renderer, UI, writing |
+
+**Status: working.** A complete experiment loop runs end to end —
+generate a map → ignite it → watch it spread → read the burned fraction.
+
+**Done**
+
+- Five-state combustion model (normal → ember → heating → burning → ash) with
+  fuel types, moisture, humidity, wind and rain
+- Fire crews with configurable count, arrival delay and tactic
+- Procedural terrain, plus a real-world mode using built-in lat/lon outlines of Eurasia
+- Elevation view, mouse-wheel zoom, adjustable playback speed (0.25×–2×) and fast-forward
+- Live statistics chart; export to CSV / JSON / Word / PPT
+- Zero-install single-file demo, deployed to GitHub Pages
+
+**In progress / planned**
+
+- The epidemic (SIR) sandbox is still a placeholder page
+- Spotting distance: firebrands currently ignore distance, which makes a firebreak
+  binary (blocked / not blocked) instead of a gradient. See `plan.md` §7.
+
+---
+
 ## 🔥 在线演示
 
 **https://luoyuan0101.github.io/ca-sandbox/**
