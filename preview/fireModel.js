@@ -18,14 +18,52 @@
  * 所有宏观现象（蔓延、跳跃、隔离带）都是这条规则 + 参数涌现出来的，
  * 模型里没有任何一条规则直接描述"火灾的形状"。
  */
+import { isLand, latitudeHumidity, latitudeTemp, REGION_MAP } from "./atlas";
 export const STATE_META = [
     { key: 0 /* CellState.Normal */, label: "正常", color: "#4A8538" },
-    { key: 1 /* CellState.Ember */, label: "火星", color: "#F0B429" },
-    { key: 2 /* CellState.Heating */, label: "升温", color: "#E8703A" },
-    { key: 3 /* CellState.Burning */, label: "燃烧", color: "#F65C0A" },
-    { key: 4 /* CellState.Ash */, label: "灰烬", color: "#3B3733" },
-    { key: 5 /* CellState.WetLine */, label: "湿隔离带", color: "#4E8FCB" },
+    { key: 1 /* CellState.Ember */, label: "火星", color: "#FFC020" },
+    { key: 2 /* CellState.Heating */, label: "升温", color: "#FF7A22" },
+    { key: 3 /* CellState.Burning */, label: "燃烧", color: "#FF4400" },
+    // 灰烬色比初版（#3B3733）还稍暗一点点，但**刻意不取纯黑**：
+    // 烧过的区域往往连成大片，如果压到 #111 就成了一块死黑斑，
+    // 底下的地形起伏全被盖住，海拔视图更是直接失效。
+    // 现在这个值离纯黑还有 149 的距离，看一眼就知道"这是烧过的地"，
+    // 同时也还能隐约透出原来的高低。
+    { key: 4 /* CellState.Ash */, label: "灰烬", color: "#38322C" },
+    // 湿隔离带是**人工**打出来的水带，必须和天然河流（#1E6FB8）分开。
+    // 旧版 #4E8FCB 和河水只差 101，两条水带摆在一起经常看混；
+    // 改成更亮更青的 #2FA8E8 之后距离拉到 142，一眼可辨。
+    { key: 5 /* CellState.WetLine */, label: "湿隔离带", color: "#2FA8E8" },
 ];
+/* ------------------------------------------------------------
+ * 配色调整（第二版）
+ *
+ * 用户反馈："这个地图太白了，加大饱和度"。
+ *
+ * "白"是可以量出来的 —— HSL 的 S（饱和度）太低、L（亮度）太高，
+ * 看着就是灰蒙蒙一片。旧配色实测：
+ *     沙土岩石 #C9BFA8  S 0.234  L 0.724   ← 最白，饱和度也最低
+ *     平均饱和度 0.380
+ *
+ * 新版不是凭眼睛调，而是用 .vt/palette-search3.mjs 在 HSL 空间里
+ * 做了坐标下降搜索，目标是"在保住饱和度的前提下，让两两最小距离尽量大"。
+ * 之所以要"搜"而不是手调，是因为踩过一次坑：
+ * 单独把针叶林和阔叶林拉开之后，瓶颈立刻转移到"湿草 vs 阔叶林"
+ * （距离只剩 69）—— 五种绿挤在同一个色相带里，调一个就动全局，
+ * 手调必然是打地鼠。最终改成把四个绿当成一条**有序阶梯**一起解。
+ *
+ * 实测结果：
+ *     平均饱和度 0.380 → 0.533（+40%）
+ *     最亮颜色   L 0.724 → 0.590
+ *     两两最小距离 56.9 → 81.2   ← 不仅没糊在一起，反而更分得开
+ *
+ * 四个绿按"亮 → 暗"排出一条阶梯，色相同时从黄绿漂到青绿，
+ * 和真实植被遥感影像的观感一致：
+ *     湿草   L 0.471  hue  92°   （草甸，最亮最黄）
+ *     阔叶林  L 0.371  hue 100°   （林冠，亮绿）
+ *     灌木   L 0.290  hue 112°   （中层，中绿）
+ *     针叶林  L 0.200  hue 127°   （林下，暗青绿）
+ * ---------------------------------------------------------- */
 export const FUELS = [
     {
         id: "drygrass",
@@ -35,7 +73,7 @@ export const FUELS = [
         spreadRange: 1,
         emberRate: 0.1,
         moisture: 0.05,
-        color: "#D4B483",
+        color: "#D9A94E",
     },
     {
         id: "wetgrass",
@@ -45,7 +83,7 @@ export const FUELS = [
         spreadRange: 1,
         emberRate: 0.03,
         moisture: 0.65,
-        color: "#67A455",
+        color: "#74B63A",
     },
     {
         id: "shrub",
@@ -55,7 +93,7 @@ export const FUELS = [
         spreadRange: 1,
         emberRate: 0.2,
         moisture: 0.2,
-        color: "#4A7C3F",
+        color: "#2F6F25",
     },
     {
         id: "conifer",
@@ -65,7 +103,7 @@ export const FUELS = [
         spreadRange: 2,
         emberRate: 0.45,
         moisture: 0.3,
-        color: "#2A5020",
+        color: "#1E4823",
     },
     {
         id: "broadleaf",
@@ -75,7 +113,7 @@ export const FUELS = [
         spreadRange: 1,
         emberRate: 0.08,
         moisture: 0.45,
-        color: "#386A2A",
+        color: "#4B9924",
     },
     {
         id: "barren",
@@ -85,7 +123,20 @@ export const FUELS = [
         spreadRange: 0,
         emberRate: 0,
         moisture: 0,
-        color: "#C9BFA8",
+        color: "#B8A275",
+    },
+    {
+        // 河流、湖泊。和裸岩的"不燃"性质完全一样，
+        // 但颜色不同 —— 让地貌一眼能看出水系在哪。
+        // 地图上水系是最好的天然防火隔离带，火烧到河边就断了。
+        id: "water",
+        name: "河流/湖泊",
+        flammability: 0,
+        burnDuration: 0,
+        spreadRange: 0,
+        emberRate: 0,
+        moisture: 1,
+        color: "#1E6FB8",
     },
 ];
 export const FUEL_MAP = Object.fromEntries(FUELS.map((f) => [f.id, f]));
@@ -140,8 +191,26 @@ export const IGNITION_CAUSES = [
     },
 ];
 export const DEFAULT_PARAMS = {
-    cols: 80,
-    rows: 50,
+    /**
+     * 默认地图精度：160 × 90 = 14,400 格
+     *
+     * 为什么从 80×50（4,000 格）提到这里？
+     * ────────────────
+     * 80×50 一格代表 10 米，只有 4000 个格子，
+     * 山脊、河谷、林道这些小尺度地貌根本铺不开 —— 看起来像色块。
+     * 14,400 格是原来的 3.6 倍，是"细节翻了近两番但依然流畅"的甜点：
+     *   · 像素块缩小到 0.61 倍边长 → 地貌纹理真正显出来
+     *   · 依然能跑满 30 轮/秒（单轮只多花约 3 倍时间，仍远低于一帧）
+     *   · 保持 16:9，和屏幕比例一致，没有黑边
+     *   · 比例尺不变（1 格仍 = 10 米），所以地图实际范围变成
+     *     1600 m × 900 m —— 更接近一片真实林场的尺度
+     *
+     * 注意：地形是**程序化生成**的，不是一张被插值放大的图片。
+     * 所以格子变细之后，长出来的是**更多细节**（新的支沟、新的林斑），
+     * 而不是把原来的图放大糊一遍。
+     */
+    cols: 160,
+    rows: 90,
     humidity: 0.3,
     windPower: 0.4,
     windDir: 0,
@@ -150,6 +219,7 @@ export const DEFAULT_PARAMS = {
     animalTrample: false,
     mix: { drygrass: 30, wetgrass: 15, shrub: 15, conifer: 20, broadleaf: 10, barren: 10 },
     seed: 20261007,
+    region: "",
 };
 /**
  * 一支消防队的扑救效率
@@ -194,8 +264,17 @@ export const RESCUE_MODES = [
         desc: "不灭火，专在火头前方打湿一条带 —— 立竿见影，但湿带会蒸干",
     },
 ];
+/**
+ * 默认扑救参数
+ *
+ * crews: 0 —— 默认【不派消防队】。
+ * 为什么？因为项目的核心问题是"火自己会怎么烧"，
+ * 默认就该让火不受干扰地烧完，看到自然状态下的蔓延规律；
+ * 想研究扑救再手动把队伍加进去。一上来就有消防队，
+ * 反而看不清地形和风到底起了多大作用。
+ */
 export const DEFAULT_RESCUE = {
-    crews: 2,
+    crews: 0,
     speed: 3,
     delay: 18,
     strategy: "nearest",
@@ -206,7 +285,7 @@ export const DEFAULT_RESCUE = {
  *
  * 现实里消防站设在城区边缘，出警后从外往里开进火场，
  * 绝不会凭空出现在火心里。所以这里固定把队伍放在地图四周的消防站，
- * 并且落点必须落在未燃烧的地面上（不会站在灰烬或火里）。
+ * 并且落点必须落在未燃烧、非水面的地面上（不会站在灰烬、火里或河中间）。
  */
 export function createCrews(params, grid) {
     const crews = [];
@@ -220,10 +299,11 @@ export function createCrews(params, grid) {
     ];
     for (let i = 0; i < params.crews; i++) {
         const s = stations[i % stations.length];
-        // 万一消防站位置不可用（比如正好是水塘/岩石），沿边找最近的可用格
+        // 万一消防站位置不可用（正好落在水面、焦土或正在烧的地方），
+        // 从站址向外螺旋找最近的可用格
         let px = s.x;
         let py = s.y;
-        if (state[py * cols + px] === 4 /* CellState.Ash */) {
+        if (!isCrewPassable(grid.fuel, state, py * cols + px)) {
             outer: for (let r = 1; r < Math.max(cols, rows); r++) {
                 for (let dx = -r; dx <= r; dx++) {
                     for (let dy = -r; dy <= r; dy++) {
@@ -231,7 +311,7 @@ export function createCrews(params, grid) {
                         const ny = s.y + dy;
                         if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
                             continue;
-                        if (state[ny * cols + nx] !== 4 /* CellState.Ash */) {
+                        if (isCrewPassable(grid.fuel, state, ny * cols + nx)) {
                             px = nx;
                             py = ny;
                             break outer;
@@ -271,17 +351,37 @@ function isFireFront(state, cols, rows, x, y) {
     return false;
 }
 /**
+ * 一格对消防队来说能不能站 / 能不能走
+ *
+ * 三条硬规则：
+ *   1. 不能站在正在燃烧的格上（那是送死）
+ *   2. 不能站在焦土上（现实里烧过的地还在阴燃、滚烫，且没有落脚点）
+ *   3. **不能走进水里** —— 消防员背着装备，不能从河面/湖面走过去
+ *
+ * 注意第 3 条是燃料属性，不是状态属性：
+ * 水面本身永远不燃（flammability = 0），所以它的 state 一直是 Normal，
+ * 老代码只看 state 就把它当成了普通地面，于是消防员能在水上平移。
+ * 这里必须同时看 fuel。
+ */
+function isCrewPassable(fuel, state, i) {
+    const s = state[i];
+    if (s === 4 /* CellState.Ash */ || s === 3 /* CellState.Burning */)
+        return false;
+    if (fuel[i] === "water")
+        return false;
+    return true;
+}
+/**
  * 寻找距 (x, y) 最近的、消防队可以站的格
  *
- * 灰烬（焦土）和正在燃烧的格都不能落脚。
+ * 灰烬（焦土）、正在燃烧的格、以及水面都不能落脚。
  * 消防队如果被火追上了（自己站的格烧起来了），必须先撤到安全地面，
  * 否则就会被"困在灰烬里" —— 这正是现实里最危险的情况。
  */
-function findSafeSpot(state, cols, rows, x, y, maxR = 6) {
+function findSafeSpot(fuel, state, cols, rows, x, y, maxR = 6) {
     if (x < 0 || y < 0 || x >= cols || y >= rows)
         return null;
-    const s = state[y * cols + x];
-    if (s !== 4 /* CellState.Ash */ && s !== 3 /* CellState.Burning */)
+    if (isCrewPassable(fuel, state, y * cols + x))
         return { x, y };
     for (let r = 1; r <= maxR; r++) {
         for (let dx = -r; dx <= r; dx++) {
@@ -293,8 +393,7 @@ function findSafeSpot(state, cols, rows, x, y, maxR = 6) {
                 const ny = y + dy;
                 if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
                     continue;
-                const ns = state[ny * cols + nx];
-                if (ns !== 4 /* CellState.Ash */ && ns !== 3 /* CellState.Burning */)
+                if (isCrewPassable(fuel, state, ny * cols + nx))
                     return { x: nx, y: ny };
             }
         }
@@ -302,7 +401,7 @@ function findSafeSpot(state, cols, rows, x, y, maxR = 6) {
     return null;
 }
 /**
- * 从 (sx, sy) 朝 (tx, ty) 走一步，绕开灰烬和火墙
+ * 从 (sx, sy) 朝 (tx, ty) 走一步，绕开灰烬、火墙和水面
  *
  * 关键：消防队【停在目标旁边的安全格上】，不会走进火里。
  * 现实里消防员是站在安全位置用水枪/灭火器压制前方的火，
@@ -310,8 +409,10 @@ function findSafeSpot(state, cols, rows, x, y, maxR = 6) {
  *
  * 走法：贪心朝目标方向前进，每一格都要落在可站的地面上，
  * 一旦下一步就是目标（或已贴到目标旁边）就停下。
+ * 遇到河流湖泊会尝试绕行；实在过不去就原地待命 ——
+ * 这也解释了为什么"隔着一条河的火"扑救队到不了。
  */
-function stepToward(state, cols, rows, sx, sy, tx, ty, maxStep) {
+function stepToward(fuel, state, cols, rows, sx, sy, tx, ty, maxStep) {
     let x = sx;
     let y = sy;
     for (let step = 0; step < maxStep; step++) {
@@ -321,12 +422,17 @@ function stepToward(state, cols, rows, sx, sy, tx, ty, maxStep) {
             break;
         const dx = Math.sign(tx - x);
         const dy = Math.sign(ty - y);
-        // 候选顺序：先斜着走，再横向、再纵向，都走不通就不动
+        // 候选顺序：先斜着走，再横向、再纵向
         const tries = [
             [dx, dy],
             [dx, 0],
             [0, dy],
         ];
+        // 主方向都被水挡住时，再试几个"绕行"方向（贴着河边往下游走找浅滩）
+        if (dx !== 0 && dy !== 0) {
+            tries.push([dx, -dy], [-dx, dy]);
+        }
+        tries.push([dy, dx], [-dy, -dx]);
         let moved = false;
         for (const [mx, my] of tries) {
             if (mx === 0 && my === 0)
@@ -335,11 +441,10 @@ function stepToward(state, cols, rows, sx, sy, tx, ty, maxStep) {
             const ny = y + my;
             if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
                 continue;
-            // 不能踩到目标格本身（那是火）；也不能踩灰烬
+            // 不能踩到目标格本身（那是火）；也不能踩灰烬、火和水
             if (nx === tx && ny === ty)
                 continue;
-            const s = state[ny * cols + nx];
-            if (s === 4 /* CellState.Ash */ || s === 3 /* CellState.Burning */)
+            if (!isCrewPassable(fuel, state, ny * cols + nx))
                 continue;
             x = nx;
             y = ny;
@@ -347,7 +452,7 @@ function stepToward(state, cols, rows, sx, sy, tx, ty, maxStep) {
             break;
         }
         if (!moved)
-            break; // 被焦土和火墙挡住，本轮原地待命
+            break; // 被焦土、火墙或河面挡住，本轮原地待命
     }
     return { x, y };
 }
@@ -424,12 +529,11 @@ export function stepCrews(grid, crews, params, rng) {
             continue;
         }
         /* ---- 第一步：先保证自己站在安全地面上 ----
-         * 如果火追上了消防队（自己那格烧起来了，或站到了焦土上），
+         * 如果火追上了消防队（自己那格烧起来了），或不小心站在水里，
          * 必须立刻撤到最近的正常地面。这是现实里最优先的事：
-         * 消防员不会为了救火把自己搭进去，也不会傻站在灰烬堆里。 */
-        const here = next.state[crew.y * cols + crew.x];
-        if (here === 4 /* CellState.Ash */ || here === 3 /* CellState.Burning */) {
-            const safe = findSafeSpot(next.state, cols, rows, crew.x, crew.y);
+         * 消防员不会为了救火把自己搭进去，也不会傻站在灰烬堆或河中间。 */
+        if (!isCrewPassable(next.fuel, next.state, crew.y * cols + crew.x)) {
+            const safe = findSafeSpot(next.fuel, next.state, cols, rows, crew.x, crew.y);
             if (safe) {
                 crew.x = safe.x;
                 crew.y = safe.y;
@@ -444,7 +548,7 @@ export function stepCrews(grid, crews, params, rng) {
         const thisCrewCuts = autoSplit ? crewIdx % 2 === 1 : fullMode === "cutline";
         if (thisCrewCuts) {
             // 在火头前方找一格还没烧的地面，去打湿它
-            const ct = findCutTarget(next.state, cols, rows, crew.x, crew.y);
+            const ct = findCutTarget(next.fuel, next.state, cols, rows, crew.x, crew.y);
             if (ct) {
                 goal = { x: ct.x, y: ct.y, i: ct.y * cols + ct.x };
                 isCutGoal = true;
@@ -482,11 +586,10 @@ export function stepCrews(grid, crews, params, rng) {
         }
         if (!goal)
             continue;
-        // 朝目标移动（绕开灰烬和火墙）
-        const moved = stepToward(next.state, cols, rows, crew.x, crew.y, goal.x, goal.y, params.speed);
-        // 落点必须安全：万一绕行把队伍送进了灰烬，就地退回
-        const land = next.state[moved.y * cols + moved.x];
-        if (land !== 4 /* CellState.Ash */ && land !== 3 /* CellState.Burning */) {
+        // 朝目标移动（绕开灰烬、火墙和水面）
+        const moved = stepToward(next.fuel, next.state, cols, rows, crew.x, crew.y, goal.x, goal.y, params.speed);
+        // 落点必须安全：万一绕行把队伍送进了灰烬或水里，就地退回
+        if (isCrewPassable(next.fuel, next.state, moved.y * cols + moved.x)) {
             crew.x = moved.x;
             crew.y = moved.y;
         }
@@ -563,15 +666,21 @@ export function stepCrews(grid, crews, params, rng) {
  * 找到一个【尚未燃烧】、且紧邻燃烧格的格，它离队伍越近越好。
  * 打湿它，火就少一个可以蔓延的出口。
  */
-function findCutTarget(state, cols, rows, crewX, crewY) {
+function findCutTarget(fuel, state, cols, rows, crewX, crewY) {
     let best = null;
     let bestScore = -Infinity;
     for (let y = 0; y < rows; y++) {
         for (let x = 0; x < cols; x++) {
             const i = y * cols + x;
             const s = state[i];
-            // 只能打湿「还能烧起来」的原始地面
+            // 只能打湿「还能烧起来」的原始地面。
+            // 水面虽然 state 也是 Normal，但它本来就烧不着，打湿它纯属浪费。
             if (s !== 0 /* CellState.Normal */)
+                continue;
+            if (fuel[i] === "water")
+                continue;
+            const fuelType = FUEL_MAP[fuel[i]];
+            if (!fuelType || fuelType.flammability <= 0)
                 continue;
             // 它必须紧邻燃烧格，才算是"火头前方"
             let touchFire = false;
@@ -616,6 +725,729 @@ export function makeRng(seed) {
         let t = Math.imul(a ^ (a >>> 15), 1 | a);
         t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
         return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+/**
+ * 把种子推进到下一个
+ *
+ * 为什么不用 `(seed * 1103515245 + 12345) & 0x7fffffff`？
+ * ────────────────────────────────────────────────
+ * 因为 JS 的 number 是 float64，尾数只有 53 位有效位。
+ * `seed * 1103515245` 在 seed 稍大时就会超过 2^53，乘法结果直接被截断，
+ * 低比特全是 0 —— 也就是说，那个公式算出来的"新种子"其实丢掉了一半信息，
+ * 连续推进时会出现明显的规律（高位变化很单调）。
+ *
+ * `Math.imul` 是 JS 里唯一能"精确做 32 位整数乘法"的算子，
+ * 它按 32 位截断，不经过 float64，所以每一步都保留全部熵。
+ *
+ * 实现用的是 **splitmix32 的 32 位变体**：
+ *   三轮"异或位移 + 乘法"混合，最后再整体搅一次。
+ * 这一点很关键：只做一次乘加的话，虽然 2000 步不重复，
+ * 但**高比特的空间没有被填满**（实测 2000 个种子里高 9 位只用到 256/512 种取值）——
+ * 而 fBm 的随机格点表恰恰最吃高位。混合不够，地图的"骨架"就会撞脸。
+ *
+ * 实测三轮混合之后：2000 步 0 碰撞，高 9 位用满 512/512。
+ */
+export function nextSeed(seed) {
+    let z = seed >>> 0;
+    // 第 1 轮
+    z = (z + 0x9e3779b9) >>> 0;
+    z = Math.imul(z ^ (z >>> 16), 0x21f0aaad) >>> 0;
+    // 第 2 轮
+    z = Math.imul(z ^ (z >>> 15), 0x735a2d97) >>> 0;
+    // 第 3 轮
+    z = Math.imul(z ^ (z >>> 15), 0x85ebca6b) >>> 0;
+    z = (z ^ (z >>> 13)) >>> 0;
+    // 收进 31 位，保持和其它种子同量级
+    return z & 0x7fffffff;
+}
+/* ============================================================
+ * 六之二、噪声与真实地貌生成
+ *
+ * 为什么要噪声？
+ * ──────────────
+ * 之前的「多数平滑」能生成成片的植被，但那是"色块"，
+ * 不像真实地形：真实的山是有起伏的、河是顺地势流的、
+ * 针叶林长在高海拔、阔叶林长在河谷、草地铺在平缓处。
+ *
+ * 这里改用「值噪声 + 分形叠加（fBm）」：
+ *   1. 生成一张高程图 → 决定山脉、丘陵、河谷、湖泊；
+ *   2. 生成一张湿度图 → 决定植被类型；
+ *   3. 按「高程 × 湿度」查表分配植被。
+ * 这样地形会自带因果：山脊是岩石，山腰是针叶林，
+ * 河谷是阔叶林，平地是草地。
+ * ============================================================ */
+/** 值噪声：用种子生成一张低频起伏场 */
+function makeValueNoise(seed) {
+    const rng = makeRng(seed);
+    // 预生成一张随机格点表，之后做双线性插值
+    const SIZE = 256;
+    const table = new Float32Array(SIZE * SIZE);
+    for (let i = 0; i < SIZE * SIZE; i++)
+        table[i] = rng();
+    const at = (ix, iy) => {
+        const x = ((ix % SIZE) + SIZE) % SIZE;
+        const y = ((iy % SIZE) + SIZE) % SIZE;
+        return table[y * SIZE + x];
+    };
+    // 平滑插值曲线（避免出现网格状的棱角）
+    const smooth = (t) => t * t * (3 - 2 * t);
+    return function noise(x, y) {
+        const x0 = Math.floor(x);
+        const y0 = Math.floor(y);
+        const fx = smooth(x - x0);
+        const fy = smooth(y - y0);
+        const a = at(x0, y0);
+        const b = at(x0 + 1, y0);
+        const c = at(x0, y0 + 1);
+        const d = at(x0 + 1, y0 + 1);
+        return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+    };
+}
+/**
+ * 分形布朗运动（fBm）：把多个倍频噪声叠起来
+ *
+ * 一层噪声只有大团的起伏，叠上更细的层之后，
+ * 就会同时具备"山脉的大轮廓"和"山坡上的小起伏"，
+ * 这就是真实地形看起来自然的原因。
+ */
+function makeFbm(seed, octaves = 4, baseFreq = 3, lacunarity = 2, gain = 0.5) {
+    const noise = makeValueNoise(seed);
+    return function fbm(x, y) {
+        let value = 0;
+        let amp = 1;
+        let freq = baseFreq;
+        let norm = 0;
+        for (let o = 0; o < octaves; o++) {
+            value += noise(x * freq, y * freq) * amp;
+            norm += amp;
+            amp *= gain;
+            freq *= lacunarity;
+        }
+        return value / norm;
+    };
+}
+export const TERRAIN_FLAVORS = [
+    {
+        id: "ridge",
+        name: "连绵山脊",
+        desc: "山连山、沟壑纵横，针叶林长在坡上 —— 火烧起来会被山脊拖住",
+        octaves: 6,
+        baseFreq: 3.1,
+        ridge: 0.85,
+        waterLevel: [0.10, 0.15],
+        rivers: [2, 4],
+        townBias: 1,
+        roads: [1, 2],
+        moistureBias: -0.02,
+        forestBias: 0.1,
+    },
+    {
+        id: "basin",
+        name: "河谷盆地",
+        desc: "四周高、中间低，几条大河横贯 —— 河就是现成的隔离带",
+        octaves: 4,
+        baseFreq: 1.9,
+        ridge: 0.35,
+        // 水量要克制：0.26~0.36 实测会淹掉 28% 的地，火根本没地方烧
+        waterLevel: [0.15, 0.21],
+        rivers: [2, 4],
+        townBias: 2,
+        roads: [2, 3],
+        moistureBias: 0.06,
+        forestBias: 0,
+    },
+    {
+        id: "plateau",
+        name: "高原缓坡",
+        desc: "一望无际的缓坡，草甸与疏林交错 —— 火会走得很远很快",
+        octaves: 3,
+        baseFreq: 1.4,
+        ridge: 0.15,
+        waterLevel: [0.06, 0.10],
+        rivers: [0, 2],
+        townBias: 1,
+        roads: [1, 2],
+        moistureBias: -0.1,
+        forestBias: -0.25,
+    },
+    {
+        id: "lakeside",
+        name: "湖沼密布",
+        desc: "大大小小的水面把地切成碎块 —— 火的传播被水体反复打断",
+        octaves: 5,
+        baseFreq: 2.4,
+        ridge: 0.45,
+        waterLevel: [0.26, 0.36],
+        rivers: [4, 6],
+        townBias: 2,
+        roads: [2, 3],
+        moistureBias: 0.16,
+        forestBias: 0.05,
+    },
+    {
+        id: "dryland",
+        name: "干旱疏林",
+        desc: "土薄树稀，枯草连片 —— 一点就着，但没什么可烧的",
+        octaves: 5,
+        baseFreq: 2.8,
+        ridge: 0.6,
+        waterLevel: [0.05, 0.09],
+        rivers: [0, 1],
+        townBias: 0,
+        roads: [1, 2],
+        moistureBias: -0.18,
+        forestBias: -0.3,
+    },
+    {
+        id: "deepforest",
+        name: "连片密林",
+        desc: "针叶林铺满大半个图 —— 这是最难打的一种火场",
+        octaves: 5,
+        baseFreq: 2.2,
+        ridge: 0.5,
+        waterLevel: [0.08, 0.13],
+        rivers: [1, 3],
+        townBias: 1,
+        roads: [1, 2],
+        // 密林要"干"而不是"湿"：湿度太高反而全变湿草，长不出连片的林子。
+        // 微微偏干 + 大幅下压阔叶阈值，才能得到大面积的 conifer。
+        moistureBias: -0.06,
+        forestBias: 0.5,
+    },
+];
+/** 按 id 取地貌品种 */
+export const FLAVOR_MAP = Object.fromEntries(TERRAIN_FLAVORS.map((f) => [f.id, f]));
+/**
+ * 生成一片「真实地貌」
+ *
+ * 和 createGrid 的区别：
+ *   createGrid  → 色块式的随机地形，够用但不像真地
+ *   createTerrain → 有海拔、有山脊、有河谷、植被随高度和湿度分布，
+ *                   看起来像一张真实的自然林区
+ *
+ * 生成流程（三步，每步都有明确的地理学依据）：
+ *   1. 高程场：多层 fBm 叠出连绵起伏。再做一次"山脊锐化"，
+ *      把高的地方推得更高，形成清晰的山脊线（不是平滑的土包）。
+ *   2. 水系：从高处顺地势往下"淌"，低洼处积水成湖，
+ *      沿途画出蜿蜒的河谷。河谷两侧自动变湿。
+ *   2.5 人类活动：低平近水处生成城镇，地图被几条弯曲的林道切开。
+ *   3. 植被：按「高程 + 湿度 + 坡度」查表 ——
+ *        山顶裸岩 → 高海拔针叶林 → 中海拔混交 → 河谷阔叶林
+ *        → 平地草地 → 低洼湿地
+ *
+ * 结果就是：你看到的每一片林子，都能说清楚它为什么长在那儿。
+ *
+ * 第二个参数 `flavorId` 指定「地貌品种」。不传的话就按 seed 自动挑一个 ——
+ * 于是同一颗种子永远对应同一种地貌（可复现），不同种子大概率是不同品种（有变化）。
+ */
+export function createTerrain(params, flavorId) {
+    const { cols, rows, seed } = params;
+    const total = cols * rows;
+    const rng = makeRng(seed ^ 0x9e3779b9);
+    // 挑品种：显式指定就用指定的，否则由 seed 决定（可复现）
+    const flavor = (flavorId ? FLAVOR_MAP[flavorId] : undefined) ??
+        TERRAIN_FLAVORS[Math.floor(makeRng(seed ^ 0x5bf03635)() * TERRAIN_FLAVORS.length)];
+    // 归一化坐标（0~1），让不同尺寸的地图看起来是同一套地貌尺度
+    const nx = (x) => x / cols;
+    const ny = (y) => y / rows;
+    // 长宽比补偿：避免地图被拉扁
+    const aspect = cols / Math.max(rows, 1);
+    /* ---------- 第 1 步：高程场 ---------- */
+    const elevFbm = makeFbm(seed, flavor.octaves, flavor.baseFreq, 2.0, 0.52);
+    const elev = new Float32Array(total);
+    let eMin = Infinity;
+    let eMax = -Infinity;
+    // 山脊锐化指数：品种决定锋利程度
+    const ridgePow = 1.6 + flavor.ridge * 1.6;
+    const ridgeMix = 0.2 + flavor.ridge * 0.45;
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            const n = elevFbm(nx(x) * aspect, ny(y));
+            // 山脊锐化：越高的地方抬得越猛，形成清晰的山脊线
+            const ridged = n < 0.5 ? n * 0.72 : 1 - Math.pow(1 - n, ridgePow) * 0.72 - 0.28 + 0.28;
+            const v = n * (1 - ridgeMix) + ridged * ridgeMix;
+            elev[y * cols + x] = v;
+            if (v < eMin)
+                eMin = v;
+            if (v > eMax)
+                eMax = v;
+        }
+    }
+    // 拉伸到 0~1 全量程，保证每张图都能用上完整的地貌层次
+    const eSpan = eMax - eMin || 1;
+    for (let i = 0; i < total; i++)
+        elev[i] = (elev[i] - eMin) / eSpan;
+    /* ---------- 第 2 步：湿度场 + 水系 ---------- */
+    // 湿度基频也跟着品种走：碎地形配碎湿度，大平原配大块湿度
+    const moistFbm = makeFbm(seed + 7919, 4, flavor.baseFreq * 1.2, 2.0, 0.5);
+    const humidity = new Float32Array(total);
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            humidity[y * cols + x] = clamp01(moistFbm(nx(x) * aspect + 11.3, ny(y) + 5.7) + flavor.moistureBias);
+        }
+    }
+    // 湖：低洼处积水
+    const isWater = new Uint8Array(total);
+    const waterLevel = flavor.waterLevel[0] + rng() * (flavor.waterLevel[1] - flavor.waterLevel[0]);
+    for (let i = 0; i < total; i++) {
+        if (elev[i] < waterLevel)
+            isWater[i] = 1;
+    }
+    // 河：从高处选几个源头，顺地势往低处淌，一路刻出河谷
+    const riverCount = flavor.rivers[0] + Math.floor(rng() * (flavor.rivers[1] - flavor.rivers[0] + 1));
+    for (let r = 0; r < riverCount; r++) {
+        let x = Math.floor(rng() * cols);
+        let y = Math.floor(rng() * rows);
+        // 找一个足够高的源头，河才有落差可淌
+        let best = -1;
+        for (let k = 0; k < 60; k++) {
+            const cx = Math.floor(rng() * cols);
+            const cy = Math.floor(rng() * rows);
+            const h = elev[cy * cols + cx];
+            if (h > best && h > 0.55) {
+                best = h;
+                x = cx;
+                y = cy;
+            }
+        }
+        if (best < 0)
+            continue;
+        // 顺流而下：每一步都走向 3×3 邻域里最低的格
+        for (let step = 0; step < cols + rows; step++) {
+            const i = y * cols + x;
+            if (isWater[i])
+                break;
+            isWater[i] = 1;
+            // 河边两格也降低高程、抬高湿度（河漫滩）
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    const ax = x + dx;
+                    const ay = y + dy;
+                    if (ax < 0 || ay < 0 || ax >= cols || ay >= rows)
+                        continue;
+                    const j = ay * cols + ax;
+                    elev[j] = Math.max(0, elev[j] - 0.06);
+                    humidity[j] = Math.min(1, humidity[j] + 0.22);
+                }
+            }
+            // 找最低的邻居继续走
+            let lowX = -1;
+            let lowY = -1;
+            let lowH = elev[i];
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    if (dx === 0 && dy === 0)
+                        continue;
+                    const ax = x + dx;
+                    const ay = y + dy;
+                    if (ax < 0 || ay < 0 || ax >= cols || ay >= rows)
+                        continue;
+                    const h = elev[ay * cols + ax];
+                    // 加一点随机，河道才不会笔直得假
+                    if (h + (rng() - 0.5) * 0.05 < lowH) {
+                        lowH = h;
+                        lowX = ax;
+                        lowY = ay;
+                    }
+                }
+            }
+            // 已经到洼地了，注水成塘，停下
+            if (lowX < 0) {
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        const ax = Math.max(0, Math.min(cols - 1, x + dx));
+                        const ay = Math.max(0, Math.min(rows - 1, y + dy));
+                        isWater[ay * cols + ax] = 1;
+                    }
+                }
+                break;
+            }
+            x = lowX;
+            y = lowY;
+        }
+    }
+    /* ---------- 第 2.5 步：人类活动 —— 城镇与林道 ----------
+     * 为什么要有这一层？
+     *   真实林区火灾很少发生在"纯无人区"。山脚下有村子、有林道，
+     *   而村子和道路既是点火源（炊烟、车、电线），也是天然阻火带。
+     *   把它画进地图，才能讨论"火会不会烧到镇子"这种真问题。
+     */
+    const isTown = new Uint8Array(total);
+    const isRoad = new Uint8Array(total);
+    // 城镇：挑一块低、平、离水近的地方安家（人类选址的真实逻辑）
+    // 干旱疏林（townBias=0）几乎没人住；河谷盆地/湖沼密布人多（townBias=2）
+    const townRoll = rng() * (2 + flavor.townBias);
+    const townCount = townRoll < 0.9 ? 2 : townRoll < 1.9 ? 1 : 0;
+    const towns = [];
+    for (let t = 0; t < townCount; t++) {
+        let bx = -1;
+        let by = -1;
+        let bestScore = -Infinity;
+        for (let k = 0; k < 120; k++) {
+            const cx = Math.floor(rng() * cols);
+            const cy = Math.floor(rng() * rows);
+            const i = cy * cols + cx;
+            if (isWater[i])
+                continue;
+            const flat = 1 - Math.abs(elev[i] - 0.3); // 越接近低海拔越好
+            const wet = humidity[i] * 0.4; // 靠水好
+            const s = flat + wet + rng() * 0.15;
+            if (s > bestScore) {
+                bestScore = s;
+                bx = cx;
+                by = cy;
+            }
+        }
+        if (bx < 0)
+            continue;
+        const rad = 1 + Math.floor(rng() * 2.6); // 半径 1~3 格
+        towns.push({ x: bx, y: by, r: rad });
+        for (let dy = -rad; dy <= rad; dy++) {
+            for (let dx = -rad; dx <= rad; dx++) {
+                const ax = bx + dx;
+                const ay = by + dy;
+                if (ax < 0 || ay < 0 || ax >= cols || ay >= rows)
+                    continue;
+                // 圆形城镇 + 边缘抖一点，不是个方块
+                const d = Math.sqrt(dx * dx + dy * dy);
+                if (d > rad + (rng() - 0.5) * 0.9)
+                    continue;
+                isTown[ay * cols + ax] = 1;
+            }
+        }
+    }
+    // 林道：从最边缘随机走向对侧，把地图切成几块
+    // —— 这既是扑火队的进场路线，也是天然的阻火带
+    const roadCount = flavor.roads[0] + Math.floor(rng() * (flavor.roads[1] - flavor.roads[0] + 1));
+    for (let r = 0; r < roadCount; r++) {
+        const vertical = rng() < 0.5;
+        let x = vertical
+            ? Math.floor(rng() * cols)
+            : rng() < 0.5
+                ? 0
+                : cols - 1;
+        let y = vertical
+            ? rng() < 0.5
+                ? 0
+                : rows - 1
+            : Math.floor(rng() * rows);
+        const steps = vertical ? rows * 2 : cols * 2;
+        // 前进方向：尽量往对侧走，但会随机漂移，于是路是弯的
+        const dirX = vertical ? (rng() - 0.5) * 0.35 : x === 0 ? 1 : -1;
+        const dirY = vertical ? (y === 0 ? 1 : -1) : (rng() - 0.5) * 0.35;
+        let fx = x;
+        let fy = y;
+        for (let s = 0; s < steps; s++) {
+            const cx = Math.round(fx);
+            const cy = Math.round(fy);
+            if (cx < 0 || cy < 0 || cx >= cols || cy >= rows)
+                break;
+            const i = cy * cols + cx;
+            isRoad[i] = 1;
+            fx += dirX + (rng() - 0.5) * 0.3;
+            fy += dirY + (rng() - 0.5) * 0.3;
+        }
+    }
+    /* ---------- 第 3 步：按高程 + 湿度分配植被 ---------- */
+    const fuel = new Array(total);
+    // 品种的"森林偏好"平移所有湿度阈值：
+    //   forestBias > 0 → 阈值降低 → 更容易长成林子（连片密林）
+    //   forestBias < 0 → 阈值升高 → 更多草地/裸地（干旱疏林）
+    // 注意阈值不能越界，所以夹在合理区间里。
+    const fb = flavor.forestBias;
+    const tMidBroad = clamp01(0.58 - fb * 0.5); // 中山带：> 这个湿度算阔叶
+    const tMidConif = clamp01(0.30 - fb * 0.5); // 中山带：> 这个湿度算针叶
+    const tLowWet = clamp01(0.62 - fb * 0.5); // 丘陵：> 这个湿度算湿草
+    const tLowShrub = clamp01(0.34 - fb * 0.5); // 丘陵：> 这个湿度算灌木
+    const tPlainWet = clamp01(0.50 - fb * 0.4); // 低地：> 这个湿度算湿地
+    const tHighConif = clamp01(0.30 + fb * 0.35); // 高海拔：低于这个湿度就是裸岩
+    /* ------------------------------------------------------------
+     * 「密林度」：光调湿度阈值是不够的
+     *
+     * 试过只压 tMidConif，结果 deepforest 的针叶林只有 17% ——
+     * 因为阈值一压，中山带的干格从"灌木"变成了"针叶"，
+     * 但丘陵和低地那两带（占半张图）依然是草和灌木，没动。
+     *
+     * 真正的"连片密林"是：**森林下限整体下沉**。
+     * 所以这里再加一个独立的机制 —— 对每个格子做一次
+     * "树线判定"：湿度够 + 海拔不太低 → 就是树。
+     * forestBias 越大，这条判定越宽松。
+     * ------------------------------------------------------------ */
+    const forest = clamp01(flavor.forestBias * 2.4); // 0~1 的"密林度"
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            const i = y * cols + x;
+            const h = elev[i];
+            const m = humidity[i];
+            let id;
+            if (isTown[i]) {
+                id = "barren"; // 城镇：房子和水泥地，烧不起来
+            }
+            else if (isRoad[i]) {
+                id = "barren"; // 林道：车能开进来的路，也是阻火带
+            }
+            else if (isWater[i]) {
+                id = "water"; // 河流 / 湖泊 —— 火过不去的天然屏障
+            }
+            else if (h > 0.88) {
+                // 山顶、陡脊：土层薄，裸岩为主，偶尔几丛灌木
+                // （只留最顶上那一小撮，不然"石头山"会占掉半张图）
+                id = rng() < 0.55 - forest * 0.2 ? "barren" : "shrub";
+            }
+            else if (h > 0.7) {
+                // 高海拔：针叶林带（喜冷、连片、燃点低、烧得久）
+                id = m < tHighConif ? "barren" : "conifer";
+            }
+            else if (h > 0.45) {
+                // 中山带：针叶与阔叶混交，湿度说了算
+                if (m > tMidBroad)
+                    id = "broadleaf";
+                else if (m > tMidConif)
+                    id = "conifer";
+                else
+                    id = "shrub";
+            }
+            else if (h > 0.22) {
+                // 丘陵、缓坡：灌木与草地交错
+                if (m > tLowWet)
+                    id = "wetgrass";
+                else if (m > tLowShrub)
+                    id = "shrub";
+                else
+                    id = "drygrass";
+            }
+            else {
+                // 低地：草为主，湿度高的地方是湿地
+                id = m > tPlainWet ? "wetgrass" : "drygrass";
+            }
+            /* 树线判定：密林度越高，越多的草/灌木被"森林"接管。
+               高海拔偏针叶（冷），低海拔偏阔叶（暖），
+               这条海拔偏好本身就是真实的地理规律。 */
+            if (forest > 0 && id !== "water" && !isTown[i] && !isRoad[i]) {
+                // 这块地"该不该长树"：湿度要够、别在最高的裸岩上
+                const treeOk = m > 0.24 + (1 - forest) * 0.26 && h < 0.86;
+                if (treeOk) {
+                    // 越高越可能是针叶，越低越可能是阔叶
+                    const coniferChance = clamp01(0.35 + h * 0.8);
+                    if (rng() < forest)
+                        id = rng() < coniferChance ? "conifer" : "broadleaf";
+                }
+            }
+            // 少量随机扰动，避免出现"教科书式"的完美分层
+            // （水面、城镇、道路不参与扰动，它们是"硬"地貌）
+            if (rng() < 0.06 && id !== "water" && !isTown[i] && !isRoad[i]) {
+                const alt = ["drygrass", "wetgrass", "shrub", "conifer", "broadleaf", "barren"];
+                id = alt[Math.floor(rng() * alt.length)];
+            }
+            fuel[i] = id;
+        }
+    }
+    /* ---------- 收尾：含水率 ---------- */
+    const moisture = new Float32Array(total);
+    for (let i = 0; i < total; i++) {
+        if (fuel[i] === "water") {
+            moisture[i] = 1;
+            continue;
+        }
+        const base = FUEL_MAP[fuel[i]]?.moisture ?? 0;
+        // 靠水的地方天然更湿
+        const nearWater = humidity[i] * 0.12;
+        moisture[i] = clamp01(base + nearWater + (rng() - 0.5) * 0.06);
+    }
+    return {
+        cols,
+        rows,
+        fuel,
+        state: new Uint8Array(total),
+        age: new Uint8Array(total),
+        moisture,
+        // 把生成植被时用的高程场一并交出去，供「海拔视图」使用。
+        // elev 在这之前已经归一化到 0~1，正是视图需要的量纲。
+        elevation: elev,
+        flavor: { id: flavor.id, name: flavor.name, desc: flavor.desc },
+    };
+}
+/**
+ * 生成一张「真实世界地图」
+ *
+ * 这是整件事的重点：地图不再是随机生成的，而是**世界上真实存在的一块地方**。
+ *
+ * 数据来源：lib/atlas.ts 里的经纬度多边形轮廓（矢量数据，可无损放大）。
+ *
+ * 生成流程：
+ *   1. 把网格坐标 (x, y) 反算成经纬度 (lon, lat)
+ *      —— 这一步就是"地图投影"：把矩形网格铺到真实经纬度上
+ *   2. 每个格子问一句 isLand(region, lon, lat)：
+ *        是陆地 → 继续判植被
+ *        是海/湖 → water（火过不去的天然屏障）
+ *   3. 植被由【纬度气候带 + 局部高程扰动】决定，而不是纯随机：
+ *        赤道附近  → 热带雨林（broadleaf，常年湿）
+ *        副热带    → 干旱草原 / 荒漠（drygrass / barren）
+ *        温带      → 阔叶林、混交林（broadleaf / conifer）
+ *        寒温带    → 针叶林（conifer，就是西伯利亚那种）
+ *        极地      → 苔原（shrub / barren）
+ *   4. 在气候带的基础上叠一层 fBm 噪声，让同一纬度带上也有林地/空旷地的区别
+ *      （真实世界里，即使是同一纬度，山脊和河谷的植被也完全不同）
+ *
+ * 为什么这样做才有意义？
+ *   因为"火在寒带针叶林里烧"和"火在热带雨林里烧"是完全不同的两件事。
+ *   前者燃料干、连片、烧得凶；后者湿、碎、往往烧不起来。
+ *   只有纬度真的对应上植被，地图上那条从西伯利亚到东南亚的斜线才有物理含义。
+ */
+export function createRealWorld(params, region) {
+    const { cols, rows, seed } = params;
+    const total = cols * rows;
+    const rng = makeRng(seed ^ 0x1b873593);
+    // 拿不到区域就退回到程序生成地形，保证永远有地图可用
+    const reg = region ?? REGION_MAP[params.region];
+    if (!reg)
+        return createTerrain(params);
+    const [west, south, east, north] = reg.bbox;
+    const lonSpan = east - west;
+    const latSpan = north - south;
+    // 网格 → 经纬度。注意 y 往下是南，所以纬度要倒过来算。
+    const lonAt = (x) => west + ((x + 0.5) / cols) * lonSpan;
+    const latAt = (y) => north - ((y + 0.5) / rows) * latSpan;
+    /* ---------- 第 1 步：海陆掩膜 ---------- */
+    const isSea = new Uint8Array(total);
+    for (let y = 0; y < rows; y++) {
+        const lat = latAt(y);
+        for (let x = 0; x < cols; x++) {
+            if (!isLand(reg, lonAt(x), lat))
+                isSea[y * cols + x] = 1;
+        }
+    }
+    /* ---------- 第 2 步：局部地形噪声（让同纬度带有变化） ---------- */
+    // 用一个大尺度的 fBm 当"海拔"，它决定同一纬度带内部是密林还是空地
+    const reliefFbm = makeFbm(seed, 5, 3.4, 2.0, 0.5);
+    const wetFbm = makeFbm(seed + 6151, 4, 4.2, 2.0, 0.5);
+    const aspect = cols / Math.max(rows, 1);
+    const relief = new Float32Array(total);
+    const localWet = new Float32Array(total);
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            const i = y * cols + x;
+            relief[i] = reliefFbm((x / cols) * aspect, y / rows);
+            localWet[i] = wetFbm((x / cols) * aspect + 3.1, y / rows + 7.9);
+        }
+    }
+    /* ---------- 第 2.5 步：把 relief 归一化成「海拔场」 ----------
+     * 真实地图的海拔不是纯噪声 —— 海面必须是 0，陆地才有起伏。
+     * 所以这里做两件事：
+     *   ① 把 relief 拉伸到 0~1（保证整条色带都用得上）
+     *   ② 所有海格强制归 0，这样海拔视图里海是一整片均匀的深蓝，
+     *      海岸线会非常清楚，而陆地的沟谷山脊一目了然。
+     */
+    const elev = new Float32Array(total);
+    let rMin = Infinity;
+    let rMax = -Infinity;
+    for (let i = 0; i < total; i++) {
+        if (isSea[i])
+            continue;
+        if (relief[i] < rMin)
+            rMin = relief[i];
+        if (relief[i] > rMax)
+            rMax = relief[i];
+    }
+    const rSpan = rMax - rMin || 1;
+    for (let i = 0; i < total; i++) {
+        elev[i] = isSea[i] ? 0 : clamp01((relief[i] - rMin) / rSpan);
+    }
+    /* ---------- 第 3 步：按气候带 + 局部地形分配植被 ---------- */
+    const fuel = new Array(total);
+    const humidity = new Float32Array(total);
+    for (let y = 0; y < rows; y++) {
+        const lat = latAt(y);
+        // 这一行的气候基准值：由纬度唯一决定
+        const baseMoist = latitudeHumidity(lat);
+        const temp = latitudeTemp(lat);
+        for (let x = 0; x < cols; x++) {
+            const i = y * cols + x;
+            if (isSea[i]) {
+                fuel[i] = "water";
+                humidity[i] = 1;
+                continue;
+            }
+            // 气候基准 + 局部起伏：山里比同纬度的平原湿，向阳坡比背阴坡干
+            const r = relief[i];
+            const m = clamp01(baseMoist + (localWet[i] - 0.5) * 0.42 + (0.5 - r) * 0.18);
+            humidity[i] = m;
+            let id;
+            if (temp < -2) {
+                // 极地 / 高山苔原：长不出树，只有地衣和矮灌木
+                id = r > 0.72 ? "barren" : "shrub";
+            }
+            else if (temp < 5) {
+                // 寒温带：针叶林带 —— 西伯利亚、斯堪的纳维亚
+                // 这里就是"最容易被点着的那片林子"
+                if (r > 0.82)
+                    id = "barren"; // 山顶裸岩
+                else if (m > 0.62 && r < 0.45)
+                    id = "wetgrass";
+                else
+                    id = "conifer";
+            }
+            else if (temp < 14) {
+                // 温带：阔叶林与针叶林混交，湿度说了算
+                if (r > 0.85)
+                    id = "barren";
+                else if (m > 0.63)
+                    id = "broadleaf";
+                else if (m > 0.36)
+                    id = r > 0.6 ? "conifer" : "broadleaf";
+                else
+                    id = "drygrass";
+            }
+            else if (temp < 21) {
+                // 亚热带 / 地中海：灌木与草地为主，夏天容易起山火
+                if (r > 0.86)
+                    id = "barren";
+                else if (m > 0.66)
+                    id = "broadleaf";
+                else if (m > 0.4)
+                    id = "shrub";
+                else
+                    id = "drygrass";
+            }
+            else {
+                // 热带：雨林（湿）→ 稀树草原（干）
+                if (m > 0.66)
+                    id = "broadleaf"; // 热带雨林，湿到基本烧不动
+                else if (m > 0.42)
+                    id = "shrub";
+                else
+                    id = "drygrass";
+            }
+            // 一小撮随机扰动，避免"教科书式"的完美分层
+            if (rng() < 0.055 && id !== "barren") {
+                const alt = ["drygrass", "wetgrass", "shrub", "conifer", "broadleaf"];
+                id = alt[Math.floor(rng() * alt.length)];
+            }
+            fuel[i] = id;
+        }
+    }
+    /* ---------- 收尾：含水率 ---------- */
+    const moisture = new Float32Array(total);
+    for (let i = 0; i < total; i++) {
+        if (fuel[i] === "water") {
+            moisture[i] = 1;
+            continue;
+        }
+        const callBase = FUEL_MAP[fuel[i]]?.moisture ?? 0;
+        // 气候带越湿，同一类燃料也越难着
+        const climate = humidity[i] * 0.18;
+        moisture[i] = clamp01(callBase + climate + (rng() - 0.5) * 0.05);
+    }
+    return {
+        cols,
+        rows,
+        fuel,
+        state: new Uint8Array(total),
+        age: new Uint8Array(total),
+        moisture,
+        // 真实地图的海拔场：海面 0，陆地内部归一化起伏
+        elevation: elev,
     };
 }
 /** 生成初始地图 */
@@ -1066,6 +1898,57 @@ export function igniteAt(grid, x, y, cause) {
                 next.age[i] = 0;
             }
         }
+    }
+    return next;
+}
+/**
+ * 随机点火：在可燃的陆地上随机挑 n 处点着
+ *
+ * 为什么要单独写一个，而不是 `igniteAt(grid, rng()*cols, rng()*rows)`？
+ * ────────────────────────────────────────────────────────────────
+ * 因为"随机丢两个点"在真实地图上经常会丢到海里。
+ * 亚欧大陆那张图有 56% 是海 —— 闭着眼睛点两下，
+ * 有相当大概率两下全落在水上，于是**看起来像是什么都没发生**，
+ * 用户会以为按钮坏了。
+ *
+ * 所以这里的做法是：先把所有「能烧的格子」的序号收集起来，
+ * 再从中等概率抽样。这样无论地图长什么样，
+ * 一次随机点火一定真的点着了 n 处不同的地方。
+ *
+ * 另外刻意避开已经烧过的格子（灰烬/正在烧的），
+ * 否则可能两处都点在同一个火场里，等于只点了一处。
+ */
+export function igniteRandom(grid, n, cause, rng) {
+    const { cols, rows } = grid;
+    const burnable = [];
+    for (let i = 0; i < grid.fuel.length; i++) {
+        const f = FUEL_MAP[grid.fuel[i]];
+        if (!f || f.flammability <= 0)
+            continue; // 水 / 裸岩 / 城镇
+        if (grid.state[i] !== 0 /* CellState.Normal */)
+            continue; // 已经烧过或正在烧
+        burnable.push(i);
+    }
+    // 整张图已经没得烧了：原样返回，让界面去提示
+    if (burnable.length === 0)
+        return grid;
+    let next = grid;
+    const picked = new Set();
+    for (let k = 0; k < n; k++) {
+        // 可点数少于要点的数量时，点满为止（避免死循环）
+        if (picked.size >= burnable.length)
+            break;
+        let idx = burnable[Math.floor(rng() * burnable.length)];
+        // 抽到重复的就再抽一次，最多试 40 次，避免极端情况下卡住
+        for (let t = 0; t < 40 && picked.has(idx); t++) {
+            idx = burnable[Math.floor(rng() * burnable.length)];
+        }
+        if (picked.has(idx))
+            continue;
+        picked.add(idx);
+        const x = idx % cols;
+        const y = Math.floor(idx / cols);
+        next = igniteAt(next, x, y, cause);
     }
     return next;
 }

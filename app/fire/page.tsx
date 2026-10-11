@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ControlPanel from "@/components/ControlPanel";
 import FireCanvas from "@/components/FireCanvas";
 import StatsChart from "@/components/StatsChart";
-import TerrainEditor from "@/components/TerrainEditor";
+import MapPanel, { MIN_COLS, MIN_ROWS, SIZE_STEPS } from "@/components/MapPanel";
 import {
   CellState,
   DEFAULT_PARAMS,
@@ -13,14 +13,19 @@ import {
   IGNITION_CAUSES,
   createBlankGrid,
   createCrews,
-  createGrid,
+
+  createRealWorld,
+  createTerrain,
   countFlammable,
   countStates,
   igniteAt,
+  igniteRandom,
   makeRng,
   paintFuel,
   stepCrews,
   stepGrid,
+  nextSeed,
+  TERRAIN_FLAVORS,
   type FireCrew,
   type Grid,
   type RescueParams,
@@ -38,19 +43,64 @@ import {
   toPptxBlob,
   type ExperimentRecord,
 } from "@/lib/export";
+import { REGION_MAP, REGIONS } from "@/lib/atlas";
+import { ELEVATION_GRADIENT_CSS } from "@/lib/elevation";
 
-export default function FirePage() {
-  const [params, setParamsState] = useState<SimParams>(DEFAULT_PARAMS);
+/**
+ * 1× 倍速对应的绝对速度（轮/秒）
+ *
+ * 为什么要有这个基准值，而不是直接让滑块存"轮/秒"？
+ * ──────────────────────────────────────────────
+ * 因为用户要的是「0.25x - 2.0x 的倍速」—— 这里的关键词是**倍速**，
+ * 也就是"相对于正常速度的倍数"。如果滑块直接存轮/秒，
+ * 那"1×"就没有确切含义（改成 1 还是 3？），以后想调基准也没有落脚点。
+ *
+ * 拆成"倍率 × 基准"之后：
+ *   · 1× 永远等于"正常速度"，与基准数值无关
+ *   · 想整体调快调慢，只改这一个数
+ *   · 「快进」那种 30 轮/秒级别的需求不再挤进倍速滑块里
+ *     （慢速细看和一步算到结果是两种意图，共用一个控件必然别扭）
+ */
+const BASE_RPS = 3;
+
+/** 「快进」一次算多少轮 */
+const FASTFORWARD_ROUNDS = 200;
+
+/**
+ * 按 params.region 决定用哪种地形
+ *
+ * region === "" → 程序生成的真实地貌（createTerrain）
+ * region === "eurasia" 等 → 真实世界地图（createRealWorld）
+ *
+ * 所有"重建地图"的地方都必须走这个函数，
+ * 否则切换区域之后一按"随机种子"就又变回程序地形了。
+ *
+ * `flavorId` 是程序地形的「地貌品种」，真实地图用不上（传 undefined）。
+ */
+function buildMap(p: SimParams, flavorId?: string): Grid {
+  return p.region ? createRealWorld(p) : createTerrain(p, flavorId);
+}
+
+export default function FirePage() {  const [params, setParamsState] = useState<SimParams>(DEFAULT_PARAMS);
   const [causeId, setCauseId] = useState("lightning");
   const [rescue, setRescueState] = useState<RescueParams>(DEFAULT_RESCUE);
   const [seed, setSeed] = useState(DEFAULT_PARAMS.seed);
 
-  const [grid, setGrid] = useState<Grid>(() => createGrid(DEFAULT_PARAMS));
+  // 一进来就给一片真实地貌，而不是色块
+  const [grid, setGrid] = useState<Grid>(() => createTerrain(DEFAULT_PARAMS));
   const [crews, setCrews] = useState<FireCrew[]>([]);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [turn, setTurn] = useState(0);
   const [running, setRunning] = useState(false);
-  const [speed, setSpeed] = useState(3);
+  /**
+   * 播放倍率（0.25 ~ 2.0）
+   *
+   * 注意它是**倍率**，不是"轮/秒"。
+   * 之前的 `speed` 直接把滑块值当轮/秒用（0.25~30），
+   * 于是"3"这个数字既是倍率又是速度，换个基准就全乱。
+   * 现在 1× 永远 = BASE_RPS 轮/秒，30 轮/秒那种速度交给「快进」。
+   */
+  const [speedMul, setSpeedMul] = useState(1);
   const [toast, setToast] = useState<string | null>(null);
   const [suppressedTotal, setSuppressedTotal] = useState(0);
   const [cutTotal, setCutTotal] = useState(0);
@@ -60,6 +110,20 @@ export default function FirePage() {
   const [paintMode, setPaintMode] = useState(false);
   const [brush, setBrush] = useState("conifer");
   const [brushRadius, setBrushRadius] = useState(1);
+  // 地图尺寸倍率：1 = 最小（128×72，约 720p），往上主要往横向铺开
+  const [sizeScale, setSizeScaleState] = useState(1);
+  /**
+   * 当前锁定的「地貌品种」。null = 不指定，由种子自己决定。
+   * 有了它，"随机换一片"才能真的换一个脾气，而不是只换细节。
+   */
+  const [flavorId, setFlavorId] = useState<string | null>(null);
+  /**
+   * 是否显示「海拔视图」
+   *
+   * 海拔场是高程生成植被时的中间量，和植被图同一次产出、天然对齐。
+   * 打开后画布按高程着色，能一眼看出火是在爬山脊还是顺河谷跑。
+   */
+  const [showElevation, setShowElevation] = useState(false);
 
   // 随机数发生器要在多次渲染间保持一致，否则每轮重新播种就不随机了
   const rngRef = useRef(makeRng(seed));
@@ -93,7 +157,7 @@ export default function FirePage() {
     (nextSeed?: number, nextParams?: SimParams) => {
       const p = nextParams ?? { ...params, seed: nextSeed ?? seed };
       rngRef.current = makeRng(p.seed);
-      const g = createGrid(p);
+      const g = buildMap(p, flavorId ?? undefined);
       setGrid(g);
       setCrews([]);
       setSnapshots([]);
@@ -112,12 +176,46 @@ export default function FirePage() {
     setParamsState((prev) => ({ ...prev, seed }));
   }, [seed]);
 
+  /**
+   * 调整地图尺寸
+   *
+   * 比例尺固定（1 格 = 10 米），所以尺寸一变，
+   * 相当于换了一块更大的地重新开始 —— 火情、消防队、曲线全部归零，
+   * 不然曲线会把两片不同大小的地拼在一张图上，没法解释。
+   */
+  const setSizeScale = useCallback((scale: number) => {
+    setSizeScaleState(scale);
+    // 档位是 [宽倍率, 高倍率]，高度只缓涨，横向主要往外铺
+    const step = SIZE_STEPS.find((s) => s[0] === scale) ?? SIZE_STEPS[0];
+    const cols = Math.round((MIN_COLS * step[0]) / 2) * 2;
+    const rows = Math.round((MIN_ROWS * step[1]) / 2) * 2;
+    rngRef.current = makeRng(seed);
+    setParamsState((prev) => {
+      const next = { ...prev, cols, rows, seed };
+      const g = buildMap(next, flavorId ?? undefined);
+      setGrid(g);
+      return next;
+    });
+    setCrews([]);
+    setSnapshots([]);
+    setTurn(0);
+    setSuppressedTotal(0);
+    setCutTotal(0);
+    setRescueMode("idle");
+    setRunning(false);
+    startedRef.current = true;
+    showToast(
+      `地图已调整为 ${cols}×${rows} 格（${((cols * 10) / 1000).toFixed(1)} km × ${((rows * 10) / 1000).toFixed(1)} km，共 ${(cols * rows).toLocaleString()} 格）`
+    );
+  }, [seed, flavorId]);
+
   /* ---------- 模拟主循环 ---------- */
   useEffect(() => {
     if (!running) return;
-    // 速度 <1 时表示"每轮要等超过 1 秒"，用来慢慢观察火怎么爬。
-    // 上限放到 4 秒，再慢就不如用"单步"按钮了。
-    const interval = Math.min(4000, Math.max(40, 1000 / speed));
+    // speedMul 是**倍率**（0.25~2），真正的轮/秒 = BASE_RPS × 倍率。
+    // 0.25× 时一轮要等 1.33 秒，用来慢慢观察火怎么爬；
+    // 上限放 4 秒，再慢就不如用"单步"按钮了。
+    const interval = Math.min(4000, Math.max(40, 1000 / (BASE_RPS * speedMul)));
     const timer = setInterval(() => {
       setGrid((g) => {
         // 第一步：火势自然演化
@@ -146,7 +244,7 @@ export default function FirePage() {
       });
     }, interval);
     return () => clearInterval(timer);
-  }, [running, speed, params, seed, turn, rescue, crews]);
+  }, [running, speedMul, params, seed, turn, rescue, crews]);
 
   /* ---------- 鼠标操作：只用于点火 ---------- */
   const handleCell = useCallback(
@@ -160,6 +258,20 @@ export default function FirePage() {
     [cause, grid, rescue]
   );
 
+  /**
+   * 点火之后要做的公共收尾
+   *
+   * 为什么抽出来？因为「点地图」和「随机点火」两条路径都必须：
+   *   ① 如果这是第一次点火，补一条第 0 轮的基线快照（曲线才有起点）
+   *   ② 按当前配置派出消防队
+   * 以前这两段是复制粘贴的，很容易改了一处忘了另一处。
+   */
+  const afterIgnite = useCallback(() => {
+    setSnapshots((prev) => (prev.length === 0 ? [countStates(grid, 0)] : prev));
+    setCrews((prev) => (prev.length === 0 ? createCrews(rescue, grid) : prev));
+    startedRef.current = false;
+  }, [grid, rescue]);
+
   /* ---------- 刷地形 ---------- */
   const handlePaint = useCallback(
     (x: number, y: number) => {
@@ -172,6 +284,7 @@ export default function FirePage() {
   function terrainClear() {
     rngRef.current = makeRng(seed);
     setGrid(createBlankGrid({ ...params, seed }, "drygrass"));
+    setFlavorId(null);
     setCrews([]);
     setSnapshots([]);
     setTurn(0);
@@ -182,10 +295,34 @@ export default function FirePage() {
     showToast("已铺满枯草，可以开始画地形了");
   }
 
-  /** 随机地形：按当前植被构成重新生成（含天然屏障） */
+  /**
+   * 随机地形：换种子 + 换品种
+   *
+   * 这里以前有个 bug：种子不推进就直接重建，于是点一百次都是同一张图。
+   * 现在两件事一起做 ——
+   *   ① 用 nextSeed() 真正推进种子（Math.imul 保证 32 位精度不丢）
+   *   ② 从种子里**排除掉当前品种**再随机挑一个
+   * 这样每次点都会换一种"脾气"，不会连着随出同一片地方。
+   */
   function terrainRandom() {
-    rngRef.current = makeRng(seed);
-    setGrid(createGrid({ ...params, seed }));
+    const s = nextSeed(seed);
+    setSeed(s);
+    setParamsState((prev) => ({ ...prev, seed: s, region: "" }));
+    rngRef.current = makeRng(s);
+
+    if (params.region) {
+      // 当前是真实地图：重新投影同一块地方（换种子 → 局部植被重采样）
+      setGrid(createRealWorld({ ...params, seed: s }));
+      showToast("已重新载入真实地图（同一块地方，重新采样）");
+    } else {
+      const pool = TERRAIN_FLAVORS.filter((f) => f.id !== flavorId);
+      const next = pool[Math.floor(Math.random() * pool.length)]?.id ?? null;
+      setFlavorId(next);
+      const g = createTerrain({ ...params, seed: s }, next ?? undefined);
+      setGrid(g);
+      showToast(`🎲 ${g.flavor?.name ?? "新地形"} —— ${g.flavor?.desc ?? ""}`);
+    }
+
     setCrews([]);
     setSnapshots([]);
     setTurn(0);
@@ -193,8 +330,87 @@ export default function FirePage() {
     setCutTotal(0);
     setRescueMode("idle");
     setRunning(false);
-    showToast("已按当前植被构成重新生成地形");
+    startedRef.current = true;
   }
+
+  /** 指定地貌品种：直接换成那个品种的一片新地形 */
+  function terrainFlavor(id: string) {
+    const s = nextSeed(seed);
+    setSeed(s);
+    setParamsState((prev) => ({ ...prev, seed: s, region: "" }));
+    rngRef.current = makeRng(s);
+    setFlavorId(id);
+    const g = createTerrain({ ...params, seed: s }, id);
+    setGrid(g);
+    setCrews([]);
+    setSnapshots([]);
+    setTurn(0);
+    setSuppressedTotal(0);
+    setCutTotal(0);
+    setRescueMode("idle");
+    setRunning(false);
+    startedRef.current = true;
+    showToast(`${g.flavor?.name} —— ${g.flavor?.desc}`);
+  }
+
+  /**
+   * 重新生成真实地貌
+   *
+   * `newSeed` 给了就用它（外部指定种子），否则推进一格。
+   * 品种默认沿用当前的 —— 想换脾气去点品种卡片，这里只换地形。
+   */
+  function terrainReal(newSeed?: number) {
+    const s = newSeed ?? nextSeed(seed);
+    rngRef.current = makeRng(s);
+    // 从真实地图切回程序地貌，记得把 region 清掉
+    setParamsState((prev) => ({ ...prev, seed: s, region: "" }));
+    const g = createTerrain({ ...params, seed: s, region: "" }, flavorId ?? undefined);
+    setGrid(g);
+    setCrews([]);
+    setSnapshots([]);
+    setTurn(0);
+    setSuppressedTotal(0);
+    setCutTotal(0);
+    setRescueMode("idle");
+    setRunning(false);
+    startedRef.current = true;
+    showToast(`🏔 已重新生成：${g.flavor?.name ?? "真实地貌"}`);
+  }
+
+  /**
+   * 切到真实世界地图
+   *
+   * region 为空字符串时表示"不用真实地图"。
+   * 切换后火情/消防队/曲线全部归零 —— 换了一块地方，旧数据没有意义。
+   */
+  const terrainWorld = useCallback(
+    (regionId: string) => {
+      // 真实地图至少给到默认精度 —— 一整块大陆塞进更小的网格会糊成一团。
+      // 取较大值，避免把已经更细的图反而降下来。
+      const cols = Math.max(grid.cols, MIN_COLS);
+      const rows = Math.max(grid.rows, MIN_ROWS);
+      const next = { ...params, region: regionId, seed, cols, rows };
+      setParamsState(next);
+      rngRef.current = makeRng(seed);
+      setGrid(createRealWorld(next));
+      setCrews([]);
+      setSnapshots([]);
+      setTurn(0);
+      setSuppressedTotal(0);
+      setCutTotal(0);
+      setRescueMode("idle");
+      setRunning(false);
+      startedRef.current = true;
+      const name = REGION_MAP[regionId]?.name ?? regionId;
+      const [w, s, e, n] = REGION_MAP[regionId]?.bbox ?? [0, 0, 1, 1];
+      const realW = (e - w) * 111 * Math.cos((((s + n) / 2) * Math.PI) / 180);
+      const realH = (n - s) * 111;
+      showToast(
+        `已载入真实世界地图：${name}（${cols}×${rows} 格，1 格 ≈ ${(realW / cols).toFixed(0)} km）`
+      );
+    },
+    [params, seed, grid.cols, grid.rows]
+  );
 
   /** 清空火情：火和灰烬都清掉，地形不动 */
   function terrainClearFire() {
@@ -284,19 +500,58 @@ export default function FirePage() {
   }
 
   /* ---------- 随机点火 ---------- */
-  function randomIgnite(n = 3) {
+  /**
+   * 随机点 n 处火（默认 2 处）
+   *
+   * 关键改动：走 igniteRandom 而不是「随机抽两个坐标」。
+   * 亚欧大陆那张图有 56% 是海，随手抽两个坐标很可能全落在水上，
+   * 用户会以为按钮坏了。igniteRandom 只在**可燃的陆地格**里抽样，
+   * 保证一次点击真的点着两处不同的地方。
+   */
+  function randomIgnite(n = 2) {
+    let lit = 0;
     setGrid((g) => {
-      let next = g;
-      const rng = rngRef.current;
-      for (let k = 0; k < n; k++) {
-        const x = Math.floor(rng() * g.cols);
-        const y = Math.floor(rng() * g.rows);
-        next = igniteAt(next, x, y, cause);
+      const next = igniteRandom(g, n, cause, rngRef.current);
+      // 用状态有没有变过来判断"到底点着了没有"
+      for (let i = 0; i < g.state.length; i++) {
+        if (next.state[i] !== g.state[i] && g.state[i] === CellState.Normal) lit++;
       }
       return next;
     });
-    setSnapshots((prev) => (prev.length === 0 ? [countStates(grid, 0)] : prev));
-    setCrews((prev) => (prev.length === 0 ? createCrews(rescue, grid) : prev));
+    if (lit === 0) {
+      showToast("这片地已经没得可烧了 —— 换一张地图，或先按「重置」");
+      return;
+    }
+    afterIgnite();
+    showToast(`🎲 随机点燃了 ${n} 处`);
+  }
+
+  /**
+   * 「开始」按钮
+   *
+   * 语义已经改掉：开始**只启动演化，绝不替你点火**。
+   * 点火这件事完全交给人 ——
+   *   · 在地图上点哪里，哪里起火
+   *   · 或者按「随机点火」随机点两处
+   * 这样"火是从哪起的"始终是你自己决定的，实验才说得清。
+   *
+   * 如果地图上一处火都没有就按了开始，给个提示而不是空转 ——
+   * 一片没有火的林子，演化一万轮也不会有任何变化。
+   */
+  function togglePlay() {
+    if (running) {
+      setRunning(false);
+      return;
+    }
+    const hasFire = grid.state.some(
+      (s) =>
+        s === CellState.Ember || s === CellState.Heating || s === CellState.Burning
+    );
+    if (!hasFire) {
+      showToast("还没有火 —— 在地图上点一下点火，或按「随机点火」");
+      return;
+    }
+    setRunning(true);
   }
 
   /* ---------- 单步 ---------- */
@@ -321,6 +576,86 @@ export default function FirePage() {
       setTurn((t) => t + 1);
       return resc.grid;
     });
+  }
+
+  /* ---------- 快进 ----------
+   * 一次性把接下来 FASTFORWARD_ROUNDS 轮算完，不经过定时器 ——
+   * 所以它不是"更快地播放"，而是"跳过播放、直接给结果"。
+   *
+   * ⚠️ React 版本比单文件版本多一个坑：
+   *    单文件版里 turn / crews / grid 都是普通变量，循环里直接改就行；
+   *    但在 React 里，setState 是**异步批处理**的 ——
+   *    如果在循环里写 `setTurn(t => t+1)`，那么下一轮读到的 `turn`
+   *    还是**旧值**，stepGrid 拿到的轮次永远是初始轮，
+   *    算出来的结果和逐轮播放对不上（火势演化的随机数消耗节奏会错位）。
+   *    所以这里**在循环外用局部变量完整算完**，
+   *    最后一次性 setState 提交结果。
+   *    这也是我先写 .vt/fastforward.mjs 对比"快进 vs 逐轮逐格一致"
+   *    的原因 —— 这种错误肉眼完全看不出来。
+   */
+  function fastForward() {
+    const hasFire = grid.state.some(
+      (s) =>
+        s === CellState.Ember || s === CellState.Heating || s === CellState.Burning
+    );
+    if (!hasFire) {
+      showToast("还没有火 —— 先在地图上点一下，或按「随机点火」");
+      return;
+    }
+
+    setRunning(false);
+
+    // 用局部变量跑完整段，避免读到过期的 state
+    const t0 = performance.now();
+    let g = grid;
+    let crewList = crews;
+    let t = turn;
+    let addSuppressed = 0;
+    let addCut = 0;
+    let lastMode = rescueMode;
+    const newSnaps: Snapshot[] = [];
+    let done = 0;
+
+    for (let k = 0; k < FASTFORWARD_ROUNDS; k++) {
+      const fire = stepGrid(g, { ...params, seed }, t, rngRef.current);
+      const resc = stepCrews(
+        fire.grid,
+        crewList.length > 0 ? crewList : createCrews(rescue, fire.grid),
+        rescue,
+        rngRef.current
+      );
+      g = resc.grid;
+      crewList = resc.crews;
+      addSuppressed += resc.suppressed;
+      addCut += resc.cut;
+      lastMode = resc.mode;
+      newSnaps.push(countStates(g, t));
+      t++;
+      done++;
+      // 火烧完了就提前收工 —— 为凑满 200 轮空转只会让用户以为"快进很慢"
+      const s = newSnaps[newSnaps.length - 1];
+      if (s.burning === 0 && s.ember === 0 && s.heating === 0) break;
+    }
+    const ms = Math.round(performance.now() - t0);
+
+    // 一次性提交
+    setGrid(g);
+    setCrews(crewList);
+    setTurn(t);
+    if (addSuppressed > 0) setSuppressedTotal((n) => n + addSuppressed);
+    if (addCut > 0) setCutTotal((n) => n + addCut);
+    setRescueMode(lastMode);
+    setSnapshots((prev) =>
+      prev.length === 0 ? [countStates(grid, 0), ...newSnaps] : [...prev, ...newSnaps]
+    );
+
+    const s = newSnaps[newSnaps.length - 1];
+    const spent = s.burning === 0 && s.ember === 0 && s.heating === 0;
+    showToast(
+      spent
+        ? `⏩ 火已熄灭（推进 ${done} 轮，用时 ${ms} ms）`
+        : `⏩ 快进 ${done} 轮（用时 ${ms} ms）`
+    );
   }
 
   /* ---------- 导出 ---------- */
@@ -434,28 +769,35 @@ export default function FirePage() {
               onCellAction={handleCell}
               crews={crews}
               rainId={params.rain}
+              windPower={params.windPower}
               turn={turn}
               running={running}
               tool={paintMode ? "paint" : "ignite"}
               onPaint={handlePaint}
+              showElevation={showElevation}
             />
 
             {/* 播放控制 */}
             <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-ash-100 pt-4">
-              <button
-                className="btn btn-primary"
-                onClick={() => {
-                  if (snapshots.length === 0) randomIgnite(2);
-                  setRunning((r) => !r);
-                }}
-              >
+              <button className="btn btn-primary" onClick={togglePlay}>
                 {running ? "⏸ 暂停" : "▶ 开始"}
               </button>
               <button className="btn btn-ghost" onClick={stepOnce}>
                 ⏭ 单步
               </button>
-              <button className="btn btn-ghost" onClick={() => randomIgnite(3)}>
+              <button
+                className="btn btn-ghost"
+                onClick={() => randomIgnite(2)}
+                title="在可燃的陆地上随机点燃两处"
+              >
                 🎲 随机点火
+              </button>
+              <button
+                className={`btn ${showElevation ? "btn-primary" : "btn-ghost"}`}
+                onClick={() => setShowElevation((v) => !v)}
+                title="按海拔给地图着色，一眼看出山脊和河谷"
+              >
+                🏔 海拔视图
               </button>
               <button className="btn btn-ghost" onClick={() => reset()}>
                 🔄 重置
@@ -465,6 +807,20 @@ export default function FirePage() {
                 <b className="font-medium text-ember-600">{burning}</b> 格
               </span>
             </div>
+
+            {/* 海拔视图打开时，说明现在看的是什么 */}
+            {showElevation && (
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg bg-ash-50 px-3 py-2">
+                <span className="text-[11.5px] text-ash-500">
+                  现在看的是<b className="font-medium text-ash-700">海拔</b> ——
+                  越亮越高，越暗越低。火是在爬山脊还是顺河谷跑，一眼就看出来了。
+                </span>
+                <span className="flex items-center gap-1.5 text-[11px] text-ash-400">
+                  <span className="inline-block h-3 w-16 rounded-[3px]" style={{ background: ELEVATION_GRADIENT_CSS }} />
+                  低 → 高
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="panel p-4">
@@ -504,44 +860,44 @@ export default function FirePage() {
 
         {/* 右侧：控制面板 */}
         <div className="space-y-4 lg:sticky lg:top-6 lg:self-start lg:border-l lg:border-ash-200 lg:pl-6">
-          {/* 播放速度 */}
+          {/* 播放倍速 */}
           <div className="panel px-4 py-3.5">
             <label className="block">
               <span className="mb-1.5 flex items-center justify-between text-[12.5px] text-ash-600">
-                播放速度
+                播放倍速
                 <b className="font-medium text-ash-800">
-                  {speed < 1 ? `${Math.round(speed * 1000)} 毫秒/轮` : `${speed} 轮/秒`}
+                  {speedMul}× · {BASE_RPS * speedMul} 轮/秒
                 </b>
               </span>
               <input
                 type="range"
                 className="slider"
                 min={0.25}
-                max={30}
+                max={2}
                 step={0.25}
-                value={speed}
-                onChange={(e) => setSpeed(Number(e.target.value))}
+                value={speedMul}
+                onChange={(e) => setSpeedMul(Number(e.target.value))}
               />
               <span className="mt-1.5 flex justify-between text-[11px] text-ash-400">
-                <span>极慢</span>
-                <span>适合慢慢看火怎么爬</span>
-                <span>快</span>
+                <span>0.25× 极慢</span>
+                <span>1× 是正常速度</span>
+                <span>2× 最快</span>
               </span>
             </label>
             {/* 常用档位，一键切换 */}
             <div className="mt-2.5 flex flex-wrap gap-1.5">
               {[
-                { v: 0.5, label: "0.5×超慢" },
-                { v: 1, label: "1×" },
-                { v: 3, label: "3×" },
-                { v: 8, label: "8×" },
-                { v: 20, label: "20×" },
+                { v: 0.25, label: "0.25×最慢" },
+                { v: 0.5, label: "0.5×" },
+                { v: 1, label: "1×正常" },
+                { v: 1.5, label: "1.5×" },
+                { v: 2, label: "2×最快" },
               ].map((p) => (
                 <button
                   key={p.v}
-                  onClick={() => setSpeed(p.v)}
+                  onClick={() => setSpeedMul(p.v)}
                   className={`rounded-md border px-2 py-1 text-[11.5px] transition ${
-                    speed === p.v
+                    speedMul === p.v
                       ? "border-ember-300 bg-ember-50 text-ember-700"
                       : "border-ash-200 bg-white text-ash-500 hover:bg-ash-50"
                   }`}
@@ -550,9 +906,22 @@ export default function FirePage() {
                 </button>
               ))}
             </div>
+            {/* 快进：和倍速是两个概念，所以单独一个按钮 + 一句话说明 */}
+            <div className="mt-3 border-t border-ash-100 pt-3">
+              <button
+                onClick={fastForward}
+                className="w-full rounded-md border border-ash-200 bg-white px-2 py-1.5 text-[12px] text-ash-600 transition hover:bg-ash-50"
+              >
+                ⏩ 快进 {FASTFORWARD_ROUNDS} 轮
+              </button>
+              <p className="mt-1.5 text-[11px] leading-relaxed text-ash-400">
+                不是&ldquo;更快地播放&rdquo;，而是一次把接下来 {FASTFORWARD_ROUNDS} 轮
+                直接算完 —— 想看到最后烧成什么样就用它，不用干等。
+              </p>
+            </div>
           </div>
 
-          <TerrainEditor
+          <MapPanel
             brush={brush}
             setBrush={setBrush}
             radius={brushRadius}
@@ -562,10 +931,17 @@ export default function FirePage() {
             onClear={terrainClear}
             onRandom={terrainRandom}
             onClearFire={terrainClearFire}
+            onTerrain={terrainReal}
+            onFlavor={terrainFlavor}
+            flavorId={grid.flavor?.id ?? flavorId}
+            onWorld={terrainWorld}
             onSave={terrainSave}
             onLoad={terrainLoad}
             cols={grid.cols}
             rows={grid.rows}
+            sizeScale={sizeScale}
+            setSizeScale={setSizeScale}
+            region={params.region}
           />
 
           <ControlPanel

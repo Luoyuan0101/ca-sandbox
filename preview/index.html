@@ -9,7 +9,10 @@
   :root {
     --ink: #2B2824; --ink2: #5C554D; --ink3: #918A81;
     --line: #E5E1DA; --bg: #FAF9F7; --card: #FFFFFF;
-    --ember: #F65C0A; --blue: #2E6FB8; --water: #4E8FCB;
+    /* --ember 只用来给滑块上色，跟 fireModel 里的「燃烧」色保持一致。
+       --water / --blue 是旧版的遗留变量，全文档只有这里声明、无人引用，
+       顺手删掉 —— 留着会让人以为改了配色还得同步改它们。 */
+    --ember: #FF4400;
   }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
@@ -23,6 +26,49 @@
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
   .card + .card { margin-top: 16px; }
   canvas { border: 1px solid var(--line); border-radius: 12px; display: block; max-width: 100%; cursor: crosshair; }
+
+  /* ---------- 放大模式 ----------
+   * 设计要点：正常模式下画布**不裁剪、不滚动**，
+   * 行为和以前完全一样；只有进入放大模式才把画布装进一个
+   * 可滚动的视口里，让用户能"推着看"。
+   * 这样最不容易改坏原有交互。 */
+  .cvwrap { position: relative; }
+  .cvwrap.zoomed {
+    overflow: auto;
+    max-height: 72vh;          /* 别把整页撑爆，留出滚动条 */
+    border-radius: 12px;
+    background: #F3F1ED;       /* 地图比视口小时，四周露出底色，看得出边界 */
+    cursor: grab;
+  }
+  .cvwrap.zoomed:active { cursor: grabbing; }
+  /* ⚠️ 必须解除 max-width。
+     外面的 `canvas { max-width: 100% }` 是为了让地图在小屏幕上不撑破布局，
+     但放大模式下画布宽度正是**要被撑开**的 ——
+     如果留着这条，浏览器会把 4 倍宽的画布硬压回容器宽度，
+     于是"滚轮放大"看起来毫无效果（其实尺寸变了，只是又被压回去了）。
+     这是那种"代码没错、CSS 在拖后腿"的典型坑。 */
+  .cvwrap.zoomed canvas { max-width: none; cursor: crosshair; }
+
+  /* 右下角悬浮按钮 */
+  .zoomb {
+    position: absolute; right: 10px; bottom: 10px;
+    width: 32px; height: 32px; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px; line-height: 1;
+    border-radius: 9px; border: 1px solid #D6D1C8;
+    background: rgba(255,255,255,0.92); color: #5C554D;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.10);
+    cursor: pointer; z-index: 5;
+  }
+  .zoomb:hover { background: #fff; color: #2B2824; border-color: #B8B2A7; }
+  .zoomb.on { background: var(--ember); border-color: var(--ember); color: #fff; }
+
+  /* 放大模式下的提示条 */
+  .hint { margin-top: 8px; font-size: 11.5px; color: #5C554D;
+          background: #F6F4F0; border: 1px solid var(--line);
+          border-radius: 8px; padding: 7px 10px; }
+  .hint b { color: #2B2824; }
+
   .tips { background: #FFF7ED; border: 1px solid #FDDCAB; color: #92400E;
           border-radius: 10px; padding: 10px 12px; font-size: 12px; line-height: 1.7; }
   .tips.blue { background: #EFF6FF; border-color: #BFDBFE; color: #1E40AF; }
@@ -34,6 +80,71 @@
   .scale-row b { font-weight: 600; color: #2B2824; }
   .scale-note { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid #F1EEE9;
                 font-size: 10.5px; line-height: 1.6; color: #918A81; }
+  /* 「生成真实地貌」主按钮 */
+  .bigbtn { display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
+            border: 1px solid rgba(46,125,79,.4); background: rgba(46,125,79,.06);
+            color: #2E7D4F; font-size: 12.5px; font-weight: 600; padding: 9px 12px; }
+  .bigbtn:hover { background: rgba(46,125,79,.12); }
+  .bigbtn span { font-size: 10.5px; font-weight: 400; color: #918A81; }
+  .bigbtn.ghost { border-color: #E7E2DA; background: #fff; color: #2B2824; margin-top: 8px; }
+  .bigbtn.ghost:hover { background: #FAF8F5; }
+  /* ---------- 地图操作子页面 ---------- */
+  .mask { position: fixed; inset: 0; z-index: 60; display: none;
+          background: rgba(30,27,24,.45); padding: 20px; overflow-y: auto; }
+  .mask.on { display: flex; align-items: flex-start; justify-content: center; }
+  .sheet { width: 100%; max-width: 720px; background: #fff; border-radius: 14px;
+           box-shadow: 0 20px 50px rgba(0,0,0,.22); margin: auto; }
+  .sheet-hd { display: flex; align-items: center; justify-content: space-between;
+              padding: 14px 20px; border-bottom: 1px solid #F1EEE9; }
+  .sheet-hd h2 { margin: 0; font-size: 15px; font-weight: 600; color: #2B2824; }
+  .sheet-hd p { margin: 3px 0 0; font-size: 11px; color: #918A81; }
+  .mapTabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+             padding: 12px 20px; border-bottom: 1px solid #F1EEE9; }
+  .mapTabs button { display: flex; flex-direction: column; gap: 2px; text-align: left;
+                    border: 1px solid #E7E2DA; background: #fff; border-radius: 8px;
+                    padding: 8px 10px; font-size: 12.5px; font-weight: 600; color: #2B2824; }
+  .mapTabs button span { font-size: 10.5px; font-weight: 400; color: #918A81; }
+  .mapTabs button.on { border-color: rgba(46,111,184,.55); background: rgba(46,111,184,.06); }
+  .mapBody { padding: 16px 20px; }
+  .mapPane .note { margin: 0 0 12px; background: #FAF8F5; border-radius: 8px;
+                   padding: 9px 12px; font-size: 11.5px; line-height: 1.7; color: #5C554D; }
+  .mapPane .fine { margin: 12px 0 0; font-size: 10.5px; line-height: 1.6; color: #918A81; }
+  .region { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+            width: 100%; text-align: left; border: 1px solid #E7E2DA; background: #fff;
+            border-radius: 9px; padding: 12px 14px; }
+  .region:hover { background: #FAF8F5; }
+  .region.on { border-color: rgba(46,125,79,.6); background: rgba(46,125,79,.06); }
+  .region b { font-size: 13px; font-weight: 600; color: #2B2824; }
+  .region .d { display: block; margin-top: 4px; font-size: 11.5px; color: #5C554D; }
+  .region .g { display: block; margin-top: 6px; font-size: 10.5px; color: #918A81; }
+  .region .go { flex: none; font-size: 11px; color: #2E7D4F; padding-top: 2px; }
+  .tagOn { display: inline-block; margin-left: 8px; background: rgba(46,125,79,.12);
+           color: #2E7D4F; border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: 600; }
+  /* 地貌品种选择网格：两列，每个品种一个小卡片 */
+  .flavGrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 8px; }  .flav { text-align: left; border: 1px solid #E7E2DA; background: #fff; border-radius: 8px;
+          padding: 9px 11px; }
+  .flav:hover { background: #FAF8F5; }
+  .flav.on { border-color: rgba(46,125,79,.6); background: rgba(46,125,79,.06); }
+  .flav b { display: block; font-size: 12px; font-weight: 600; color: #2B2824; }
+  .flav .fd { display: block; margin-top: 3px; font-size: 10px; line-height: 1.5; color: #918A81; }
+  /* 顶部飘出来的轻提示 */
+  #toast { position: fixed; left: 50%; bottom: 32px; transform: translate(-50%, 12px);
+           max-width: min(560px, 88vw); background: #2B2824; color: #F7F5F2;
+           border-radius: 10px; padding: 11px 18px; font-size: 12.5px; line-height: 1.6;
+           box-shadow: 0 8px 28px rgba(0,0,0,.22); opacity: 0; pointer-events: none;
+           transition: opacity .22s, transform .22s; z-index: 90; }
+  #toast.on { opacity: 1; transform: translate(-50%, 0); }
+  .mapFoot { display: grid; grid-template-columns: 1fr; gap: 10px;
+             padding: 14px 20px 18px; border-top: 1px solid #F1EEE9; }
+  .foot-hd { display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; color: #2B2824; }
+  .mapFoot input[type=range] { width: 100%; margin-top: 6px; }
+  .foot-note { font-size: 10.5px; line-height: 1.6; color: #918A81; }
+  @media (max-width: 640px) {
+    .mapTabs { grid-template-columns: repeat(2, 1fr); }
+  }
+  .sizeinfo { display: flex; flex-wrap: wrap; gap: 12px; font-size: 10.5px; color: #918A81; margin-top: 2px; }
+  .sizeinfo b { color: #2B2824; font-weight: 600; }
+  .sizeinfo .warn { background: #FDEEE8; color: #C4552A; padding: 1px 6px; border-radius: 4px; }
   .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 12px; font-size: 12px; color: var(--ink2); }
   .legend span { display: flex; align-items: center; gap: 5px; }
   .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
@@ -73,13 +184,31 @@
     <div>
       <div class="card">
         <div class="legend" id="legend"></div>
-        <canvas id="cv"></canvas>
+        <!-- 画布要能挂右下角的悬浮按钮，所以套一层相对定位容器。
+             按钮不能用绝对定位挂在 card 上 —— card 里还有图例和统计行，
+             那样按钮会跑到统计行下面去，不在"地图的右下角"。 -->
+        <div class="cvwrap" id="cvwrap">
+          <canvas id="cv"></canvas>
+          <button class="zoomb" id="zoomb" title="放大查看整张地图（滚轮可缩放）">⤢</button>
+        </div>
         <div class="stat" id="stat"></div>
+        <div class="hint" id="zoomHint" hidden>
+          <b>放大模式</b>：滚轮缩放 · 在图上点一下照样点火 · 再点右下角按钮退出
+        </div>
         <div class="row" style="margin-top:14px;border-top:1px solid #F1EEE9;padding-top:14px">
           <button class="primary" id="play">▶ 开始</button>
           <button id="step">⏭ 单步</button>
+          <button id="fast">⏩ 快进</button>
           <button id="ignite">🎲 随机点火</button>
+          <button id="elev">🏔 海拔视图</button>
           <button id="reset">🔄 重置</button>
+        </div>
+        <div class="tips" id="playHint" style="margin-top:12px">
+          <b>火从哪里起，由你决定</b>：在地图上点一下就是一处火，
+          或者按「随机点火」随机点两处。点「开始」只是让火开始烧 ——
+          它不会替你点火。<br>
+          <b>「快进」</b>是一次性把接下来的 <b>200 轮</b>直接算完，
+          想看到"最后烧成什么样"就用它，不用干等。
         </div>
       </div>
 
@@ -111,12 +240,13 @@
     <div>
       <div class="card">
         <label class="f">
-          <span>播放速度 <b id="spdLabel">3 轮/秒</b></span>
-          <input type="range" id="spd" min="0.25" max="30" step="0.25" value="3" />
+          <span>播放倍速 <b id="spdLabel">1×</b></span>
+          <input type="range" id="spd" min="0.25" max="2" step="0.25" value="1" />
         </label>
         <div class="chips" id="spdChips"></div>
         <div class="tips" style="margin-top:12px">
-          火势太快看不清？拖到最左边用 <b>0.5 轮/秒</b>，或者用「单步」一轮一轮看。
+          1× 是正常速度（<b>3 轮/秒</b>）。<br>
+          想慢速细看就用 <b>0.25×</b>；想快速看到结果，用下面的「快进」。
         </div>
       </div>
 
@@ -147,37 +277,27 @@
       </div>
 
       <div class="card">
-        <div class="sec" style="margin-top:0">地形编辑器</div>
-        <div class="chips" id="fuelChips"></div>
-        <label class="f" style="margin-top:12px">
-          <span>笔刷大小 <b id="brushLabel">3 格宽</b></span>
-          <input type="range" id="brush" min="0" max="6" step="1" value="1" />
-        </label>
-        <div class="row">
-          <button id="fillGrass">铺满枯草</button>
-          <button id="randTerrain">随机地形</button>
-          <button id="clearFire">清空火情</button>
-        </div>
-        <div class="row" style="margin-top:6px">
-          <button id="saveMap">↓ 保存地图</button>
-          <button id="loadMap">↑ 载入地图</button>
+        <div class="sec" style="margin-top:0">地图</div>
+        <button id="openMap" class="bigbtn">🗺 更换地图<span id="mapNow">当前：程序生成地貌 · 80×50 格</span></button>
+        <div class="sizeinfo" style="margin-top:10px">
+          <span>共 <b id="cellCount">4,000</b> 格</span>
+          <span>实际范围 <b id="realRange">0.80 km × 0.50 km</b></span>
         </div>
         <div class="tips" style="margin-top:12px">
-          选一种植被后，在左侧地图上<b>按住拖动</b>即可铺地形。
-          试试用「岩石」围一圈，或者铺一条湿草带 —— 看看火还能不能过去。
-          画好的地图可以「保存地图」存成文件，下次再「载入地图」接着用。
+          换地图、调尺寸、自己画、存取存档，都在「更换地图」里面。
         </div>
 
         <div class="scale">
           <div class="scale-hd">
             <span>比例尺</span><i>1 格 = 10 米</i>
           </div>
-          <div class="scale-row"><span>整张地图</span><b>800 m × 500 m</b></div>
-          <div class="scale-row"><span>面积</span><b>40.0 公顷（0.40 km²）</b></div>
-          <div class="scale-row"><span>≈ 足球场</span><b>56 个</b></div>
-          <p class="scale-note">
-            单格约一片宅基地大小，整张图相当于一座小型林场。真实山火动辄上万亩（&gt;6 km²），
-            所以这里模拟的是一场 &lt;500 米见方的局部火 —— 重点看「规律」，不看「体量」。
+          <div class="scale-row"><span>整张地图</span><b id="scaleSize">800 m × 500 m</b></div>
+          <div class="scale-row"><span>面积</span><b id="scaleArea">40.0 公顷（0.40 km²）</b></div>
+          <div class="scale-row"><span>≈ 足球场</span><b id="scaleBall">56 个</b></div>
+          <p class="scale-note" id="scaleNote">
+            比例尺是固定的：无论地图多大，1 格永远等于 10 米。
+            拉大尺寸不是「把格子拉大」，而是「往外多看一圈地」——
+            面积随尺寸增长，单格代表的实际大小不变。
           </p>
         </div>
       </div>
@@ -203,36 +323,249 @@
   </div>
 </div>
 
+<!-- ============ 地图操作子页面 ============ -->
+<div id="mapMask" class="mask">
+  <div class="sheet">
+    <div class="sheet-hd">
+      <div>
+        <h2>地图操作</h2>
+        <p>换一块地、调尺寸、自己画、存取存档</p>
+      </div>
+      <button id="mapClose">关闭 (Esc)</button>
+    </div>
+
+    <div class="mapTabs" id="mapTabs">
+      <button data-tab="world" class="on">🌍 真实世界<span>世界地图上的真实区域</span></button>
+      <button data-tab="random">🎲 随机生成<span>程序生成的地貌</span></button>
+      <button data-tab="paint">🖌 绘画地图<span>自己一笔一笔画</span></button>
+      <button data-tab="io">💾 导入 / 载入<span>存取地图存档</span></button>
+    </div>
+
+    <div class="mapBody">
+      <div class="mapPane" data-pane="world">
+        <p class="note">
+          地图不再是随机生成的，而是世界上真实存在的一块地方。
+          每格的植被由它的<b>真实纬度</b>决定 —— 副热带是干旱草原与荒漠，
+          温带是阔叶林，寒带是针叶林。最北那一大片绿色针叶，
+          就是西伯利亚。
+        </p>
+        <div id="regionList"></div>
+        <p class="fine">
+          轮廓数据内置于本文件，是矢量多边形（不是位图），
+          所以放大到任何网格分辨率都不会糊，也不依赖任何外部图片或网络请求。
+        </p>
+      </div>
+
+      <div class="mapPane" data-pane="random" hidden>
+        <p class="note">
+          用噪声算法从零生成一片地貌。它不在地球上的任何地方，
+          但地貌逻辑（山脉、河谷、林带、城镇、林道）是按照真实地理规律搭出来的。
+        </p>
+        <p class="note" style="margin-top:-4px">
+          每次随机都会换一种<b>地貌品种</b> —— 山脊、盆地、高原、湖沼、
+          疏林、密林各有各的火场脾气，不会每次都长一个样。
+        </p>
+        <button id="randTerrain" class="bigbtn">🎲 随机换一片（换个品种）<span id="randDesc">随机挑一种地貌品种 + 随机地形</span></button>
+        <div class="flavGrid" id="flavorGrid"></div>
+        <button id="realTerrain" class="bigbtn ghost">🏔 重新生成同品种<span id="realDesc">沿用当前品种，只换一套地形</span></button>
+        <button id="fillGrass" class="bigbtn ghost">🟨 铺满枯草<span>清掉一切，只留一片最容易烧的草地</span></button>
+      </div>
+
+      <div class="mapPane" data-pane="paint" hidden>
+        <p class="note">选一种植被后，在左侧地图上<b>按住拖动</b>即可铺地形。
+          试试用「岩石」围一圈，或者铺一条湿草带 —— 看看火还能不能过去。</p>
+        <div class="chips" id="fuelChips"></div>
+        <label class="f" style="margin-top:12px">
+          <span>笔刷大小 <b id="brushLabel">3 格宽</b></span>
+          <input type="range" id="brush" min="0" max="6" step="1" value="1" />
+        </label>
+        <button id="clearFire" class="bigbtn ghost">清空火情（地形不动）<span>把火和灰烬清掉，植被保持原样</span></button>
+      </div>
+
+      <div class="mapPane" data-pane="io" hidden>
+        <p class="note">存档是一个 .json 文件，里面装着植被、湿度和当前火情。
+          存下来就能反复用同一片火场做对照实验。</p>
+        <div class="row">
+          <button id="saveMap">↓ 保存地图</button>
+          <button id="loadMap">↑ 载入地图</button>
+        </div>
+        <p class="fine">保存的是「当前这张图」的完整状态。载入时会自动按存档里的格数
+          调整地图尺寸，不需要手动改设置。</p>
+      </div>
+    </div>
+
+    <div class="mapFoot">
+      <div>
+        <div class="foot-hd"><span>地图尺寸</span><b id="sizeLabel">80 × 50 格</b></div>
+        <input type="range" id="size" min="0" max="6" step="1" value="0" />
+        <div class="fine" id="sizeFine">最小（80×50） · 1× · 最大</div>
+      </div>
+      <div class="foot-note">
+        1 格永远等于 10 米。拉大尺寸不是「把格子拉大」，而是「往外多看一圈地」。
+      </div>
+    </div>
+  </div>
+</div>
+
 <script type="module">
 import * as M from "./fireModel.js";
+import { ELEVATION_LUT, ELEVATION_GRADIENT_CSS } from "./elevation.js";
 const A = { NORMAL:0, EMBER:1, HEAT:2, BURN:3, ASH:4, WET:5 };
-const CELL = 11, MARGIN = 1;
+const BASE_CELL = 11, MARGIN = 1, MAX_W = 760;
+
+/* ---------- 放大模式 ----------
+ * 用户的要求拆成五条：
+ *   ① 地图右下角有一个放大图标
+ *   ② 点它 → 屏幕上显示整张地图，并且从此**滚轮能改地图大小**
+ *   ③ 正常模式下滚轮**不能**改大小（避免误触把地图滚没了）
+ *   ④ 放大状态下仍然能点图点火
+ *   ⑤ 再点一次退出
+ *
+ * 实现上的关键决定：**缩放只改 cell() 的返回值，不改地图数据**。
+ * cell() 是"一格画多少像素"，是整个渲染的唯一尺寸来源。
+ * 只要它乘上 zoom，绘制、命中检测、缩放全部自动跟着走 ——
+ * 不需要在 draw() 里到处乘系数，那种改法一定会漏掉一两处，
+ * 然后出现"看着在 A 处、点下去点在 B 处"的错位。
+ */
+const ZOOM_MIN = 0.5, ZOOM_MAX = 4, ZOOM_STEP = 1.25;
+let zoomed = false;      // 是否处于放大模式（滚轮是否生效）
+let zoom = 1;            // 缩放倍率
+
+/** 是否处于放大模式（滚轮只在放大模式里改大小） */
+const isZoomMode = () => zoomed;
+
+// 格子像素 = 基础尺寸 × 缩放。放大模式下**不封顶到 BASE_CELL** ——
+// 否则地图一大就永远放不大（160 列时基础值只有 4px，乘 4 倍也只有 16px，
+// 但被 min(BASE_CELL) 卡回 11px，用户会觉得"滚了没反应"）。
+function cell() {
+  const base = Math.max(1, Math.min(BASE_CELL, Math.floor(MAX_W / grid.cols)));
+  if (!zoomed) return base;
+  return Math.max(1, Math.round(base * zoom));
+}
+const gapOf = (c) => (c >= 3 ? MARGIN : 0);
+/** 海拔换色：走 256 级查找表，几万格也不掉帧 */
+const elevColor = (h) => {
+  if (!(h > 0)) h = 0;
+  if (h > 1) h = 1;
+  return ELEVATION_LUT[(h * 255) | 0];
+};
+/** 是否处于「海拔视图」 */
+let showElevation = false;
+
+// 各级雨量的视觉参数：雨越大气越粗、落得越快、颜色越深
+const RAIN_STYLE = {
+  light:    { color: "rgba(120,168,214,0.34)", width: 0.8, length: 5,  driftX: 7,  driftY: 19 },
+  moderate: { color: "rgba(104,156,210,0.50)", width: 1,   length: 9,  driftX: 13, driftY: 33 },
+  heavy:    { color: "rgba(88,140,198,0.62)",  width: 1.3, length: 14, driftX: 19, driftY: 49 },
+  storm:    { color: "rgba(74,124,184,0.72)",  width: 1.6, length: 20, driftX: 27, driftY: 67 },
+};
 
 const cv = document.getElementById("cv");
 const ctx = cv.getContext("2d");
 
+/* 换地图的唯一入口：所有"重建地图"的地方都必须走 buildMap()，
+   否则切到真实世界地图之后一按"重置"就又变回程序地形了。 */
+function buildMap() {
+  return params.region ? M.createRealWorld(params) : M.createTerrain(params);
+}
+/** 换了地图之后，消防队/回放/计数全部作废，必须清干净 */
+function afterMapChange() {
+  crews = []; snaps = []; turn = 0; suppressed = 0; cut = 0;
+  resize(); draw(); updateStat(); updateScaleUI(); updateMapNow();
+}
+
 let params = { ...M.DEFAULT_PARAMS };
 let rescue = { ...M.DEFAULT_RESCUE, delay: 18 };
-let grid = M.createGrid(params);
+let grid = buildMap();
 let crews = [];
 let rng = M.makeRng(params.seed);
-let turn = 0, running = false, speed = 3;
+let turn = 0, running = false;
+
+/* ---------- 倍速 ----------
+ * 用户要的是「0.25x - 2.0x 的倍速设置」，所以要分清两个概念：
+ *
+ *   speedMul   —— 倍率，0.25 ~ 2.0。（用户拖的就是它）
+ *   BASE_RPS   —— 1× 对应的绝对速度，固定 3 轮/秒。
+ *
+ * 为什么必须拆开？
+ * 老版本直接把滑块的值当成"轮/秒"用（0.25~30），
+ * 于是"3"这个数字既表示倍率又表示速度，换个基准就全乱了。
+ * 拆开之后，「1×」永远等于"正常速度"，无论以后基准怎么调；
+ * 而 30 轮/秒那种速度交给独立的「快进」按钮，
+ * 不再和倍速混在同一个滑块里 —— 因为"慢动作细看"和
+ * "一步算到结果"是两种完全不同的意图，塞一个控件里必然别扭。
+ */
+const BASE_RPS = 3;
+let speedMul = 1;
+
+/** 当前实际速度（轮/秒）。tick 和标签都用它，保证显示与行为一致。 */
+function roundsPerSec() {
+  return BASE_RPS * speedMul;
+}
+
 let snaps = [], suppressed = 0, cut = 0;
 let paintMode = false, brush = "conifer", brushRadius = 1;
 let timer = null;
+// 尺寸倍率：1 = 最小 80×50
+let sizeScale = 1;
 
-/* ---------- 图例 ---------- */
+/* ---------- 状态色 / 兜底色 ----------
+ * 为什么要有这两个小东西？
+ *
+ * 【状态色】画布以前直接写 `color = "#3B3733"`，而图例读的是 M.STATE_META。
+ *   同一件事两份真相 —— 这次改配色就露馅了：改了 STATE_META，
+ *   图例变了、画布没变。所以统一走这个函数取，
+ *   传进来的 fallback 只在 STATE_META 里真找不到时用。
+ *
+ * 【兜底色】`#C9BFA8` 这个"沙土/岩石"色以前在画布里出现了三次。
+ *   现在它也改了（#C9BFA8 → #B8A275），如果继续散着写，
+ *   下一个人改配色一定漏掉一两处。收成一个常量。
+ */
+const FALLBACK_FUEL = M.FUEL_MAP["barren"].color;
+
+function stateColor(key, fallback) {
+  const m = M.STATE_META.find((s) => s.key === key);
+  return m ? m.color : fallback;
+}
+
+/* ---------- 图例 ----------
+ * 抽成函数是因为海拔视图打开时图例要整个换掉 ——
+ * 那时候画布上已经没有"针叶林/枯草"这些颜色了，
+ * 继续显示植被图例会让人以为配色坏了。
+ */
 const legendEl = document.getElementById("legend");
-M.STATE_META.forEach(s => {
-  legendEl.insertAdjacentHTML("beforeend",
-    `<span><i class="sw" style="background:${s.color}"></i>${s.label}</span>`);
-});
-legendEl.insertAdjacentHTML("beforeend",
-  `<span><i class="sw" style="background:#2E6FB8;border-radius:50%"></i>消防队</span>`);
+function buildLegend() {
+  const parts = [];
+  if (showElevation) {
+    parts.push(
+      `<span><i class="sw" style="background:${ELEVATION_GRADIENT_CSS};width:52px"></i>海拔 低 → 高</span>`
+    );
+    parts.push(`<span><i class="sw" style="background:#265684"></i>水面</span>`);
+    // 火情那一组在海拔视图下依然有效，照常显示
+    [A.BURN, A.HEAT, A.EMBER, A.ASH, A.WET].forEach((k) => {
+      const s = M.STATE_META.find((m) => m.key === k);
+      if (s) parts.push(`<span><i class="sw" style="background:${s.color}"></i>${s.label}</span>`);
+    });
+  } else {
+    M.STATE_META.forEach((s) => {
+      parts.push(`<span><i class="sw" style="background:${s.color}"></i>${s.label}</span>`);
+    });
+    // ⚠️ 这里**不要硬编码颜色**。
+    //   踩过的坑：以前写死成 `#4A87B8`，后来把水色改浓成 `#1E6FB8`，
+    //   图例却还是旧的那一格浅蓝 —— 配色明明改了，图例却骗人。
+    //   改成从模型里取，改色时图例自动跟上。
+    const wat = M.FUEL_MAP["water"];
+    parts.push(`<span><i class="sw" style="background:${wat.color}"></i>${wat.name}</span>`);
+  }
+  parts.push(`<span><i class="sw" style="background:#2E6FB8;border-radius:50%"></i>消防队</span>`);
+  legendEl.innerHTML = parts.join("");
+}
+buildLegend();
 
 /* ---------- 画布 ---------- */
 function resize() {
-  const w = grid.cols * CELL, h = grid.rows * CELL;
+  const C = cell();
+  const w = grid.cols * C, h = grid.rows * C;
   const dpr = window.devicePixelRatio || 1;
   cv.width = w * dpr; cv.height = h * dpr;
   cv.style.width = w + "px"; cv.style.height = h + "px";
@@ -241,50 +574,158 @@ function resize() {
 
 function draw() {
   const { cols, rows } = grid;
+  const C = cell(), gap = gapOf(C);
+  const W = cols * C, H = rows * C;
   ctx.fillStyle = "#FAF9F7";
-  ctx.fillRect(0, 0, cols * CELL, rows * CELL);
+  ctx.fillRect(0, 0, W, H);
 
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
       const i = y * cols + x;
       const f = M.FUEL_MAP[grid.fuel[i]];
       const st = grid.state[i];
+      const px = x * C, py = y * C;
       let color;
-      if (!f || f.flammability <= 0) color = "#C9BFA8";
-      else if (st === A.ASH) color = "#3B3733";
-      else if (st === A.WET) color = "#4E8FCB";
-      else if (st === A.BURN) {
-        const t = (turn + i * 7) % 3;
-        color = t === 0 ? "#F65C0A" : t === 1 ? "#FF7A2F" : "#FFB020";
+
+      /* 海拔视图：只把「没着火的地面」换成地形色，
+         火/灰烬/湿带这些事件照常显示原色 ——
+         这样才看得出"火是在爬坡还是顺沟跑"。 */
+      const isFireEvent =
+        st === A.BURN || st === A.HEAT || st === A.EMBER || st === A.ASH || st === A.WET;
+
+      if (showElevation && !isFireEvent) {
+        const h = grid.elevation ? grid.elevation[i] : undefined;
+        color = h === undefined ? (f ? f.color : FALLBACK_FUEL) : elevColor(h);
+        // 海/湖再压一层青，把水面和"低地"区分开，海岸线才看得清
+        if (f && f.flammability <= 0 && f.id === "water") {
+          ctx.fillStyle = color;
+          ctx.fillRect(px, py, C - gap, C - gap);
+          ctx.fillStyle = "rgba(38,86,132,0.62)";
+          ctx.fillRect(px, py, C - gap, C - gap);
+          continue;
+        }
       }
-      else if (st === A.HEAT) color = "#E8703A";
-      else if (st === A.EMBER) color = "#F0B429";
+      /* 状态色统一从 STATE_META 取，不再各自硬编码。
+         ⚠️ 踩过的坑：以前这里散着 #3B3733 / #4E8FCB / #E8703A …
+         图例用的是 STATE_META，画布用的是这些字面量 ——
+         同一件事有两份真相，改配色时必然漏掉一处，
+         于是"图例说这是灰烬、画布上是别的颜色"。
+         现在画布和图例读的是同一个常量，不可能再对不上。 */
+      else if (st === A.ASH) color = stateColor(A.ASH, "#38322C");
+      else if (st === A.WET) color = stateColor(A.WET, "#2FA8E8");
+      else if (st === A.BURN) {
+        // 明火的三级闪烁：底层是"燃烧"色，往上打两个更亮的橙黄。
+        // 加饱和之后底色变浓，这里必须**同一步调**跟着提亮提饱和，
+        // 否则闪烁帧会比底色暗，火焰反而变成一块块脏斑。
+        const t = (turn + i * 7) % 3;
+        color = t === 0 ? stateColor(A.BURN, "#FF4400")
+              : t === 1 ? "#FF7A2F"
+              : "#FFC24A";
+      }
+      else if (st === A.HEAT) color = stateColor(A.HEAT, "#FF7A22");
+      else if (st === A.EMBER) color = stateColor(A.EMBER, "#FFC020");
+      else if (!f || f.flammability <= 0) color = f ? f.color : FALLBACK_FUEL;
       else {
+        // 先铺植被本身的颜色，再按含水率叠一层「湿润色罩」。
+        // 关键：不是把颜色整个换成绿色 —— 针叶林的深绿、枯草的米黄都还认得出。
         color = f.color;
-        if (grid.moisture[i] > 0.5) color = "#7FBF6A";
+        const m = grid.moisture[i];
+        if (m > 0.35) {
+          const wet = Math.min(1, (m - 0.35) / 0.5);
+          ctx.fillStyle = color;
+          ctx.fillRect(px, py, C - gap, C - gap);
+          ctx.fillStyle = `rgba(96,150,196,${(wet * 0.3).toFixed(3)})`;
+          ctx.fillRect(px, py, C - gap, C - gap);
+          continue;
+        }
       }
       ctx.fillStyle = color;
-      ctx.fillRect(x * CELL, y * CELL, CELL - MARGIN, CELL - MARGIN);
+      ctx.fillRect(px, py, C - gap, C - gap);
     }
   }
 
   // 消防队
+  const crewR = Math.max(1.5, C * 0.52);
   for (const c of crews) {
-    const px = c.x * CELL + CELL / 2, py = c.y * CELL + CELL / 2;
-    if (c.delay <= 0) {
+    const px = c.x * C + C / 2, py = c.y * C + C / 2;
+    if (c.delay <= 0 && C >= 4) {
       ctx.beginPath();
-      ctx.arc(px, py, CELL * 1.5, 0, Math.PI * 2);
+      ctx.arc(px, py, C * 1.5, 0, Math.PI * 2);
       ctx.fillStyle = "rgba(78,143,203,0.13)";
       ctx.fill();
     }
     ctx.beginPath();
-    ctx.arc(px, py, CELL * 0.52, 0, Math.PI * 2);
+    ctx.arc(px, py, crewR, 0, Math.PI * 2);
     ctx.fillStyle = c.delay > 0 ? "#8FAECC" : "#2E6FB8";
     ctx.fill();
-    ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2; ctx.stroke();
-    if (c.delay > 0) {
-      ctx.strokeStyle = "#2E6FB8"; ctx.lineWidth = 1;
-      ctx.strokeRect(px - CELL * 0.75, py - CELL * 0.75, CELL * 1.5, CELL * 1.5);
+    if (C >= 4) {
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2; ctx.stroke();
+      if (c.delay > 0) {
+        ctx.strokeStyle = "#2E6FB8"; ctx.lineWidth = 1;
+        ctx.strokeRect(px - C * 0.75, py - C * 0.75, C * 1.5, C * 1.5);
+      }
+    }
+  }
+
+  /* ---------- 天气层 ----------
+   * 天气是「叠加在地图上的」，不是「把地图涂掉」。
+   * 雨丝不再依赖 running —— 之前暂停就看不见雨，用户以为雨停了。 */
+  const rain = M.RAIN_MAP[params.rain];
+  if (rain && rain.density > 0) {
+    const slant = 2 + (params.windPower ?? 0.4) * 4;
+
+    // 1) 雨中含水汽，越大雨越朦胧
+    const hazeMap = { moderate: 0.05, heavy: 0.08, storm: 0.11 };
+    if (hazeMap[rain.id]) {
+      ctx.fillStyle = `rgba(196,214,232,${hazeMap[rain.id]})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    // 2) 雨丝
+    const S = RAIN_STYLE[rain.id] || RAIN_STYLE.light;
+    ctx.strokeStyle = S.color;
+    ctx.lineWidth = S.width;
+    ctx.beginPath();
+    for (let k = 0; k < rain.density; k++) {
+      const rx = ((k * 97 + turn * S.driftX) % W) + 0.5;
+      const ry = (k * 53 + turn * S.driftY) % H;
+      ctx.moveTo(rx, ry);
+      ctx.lineTo(rx - slant, ry + S.length);
+    }
+    ctx.stroke();
+
+    // 3) 大雨以上：地上溅起水花
+    if (rain.id === "heavy" || rain.id === "storm") {
+      const splashes = rain.id === "storm" ? 120 : 60;
+      ctx.fillStyle = "rgba(168,205,236,0.55)";
+      for (let k = 0; k < splashes; k++) {
+        if ((turn + k) % 3 !== 0) continue;
+        ctx.fillRect((k * 173 + turn * 29) % W, (k * 311 + turn * 17) % H, 1.6, 1.6);
+      }
+    }
+
+    // 4) 暴雨：压暗 + 偶发闪电
+    if (rain.id === "storm") {
+      ctx.fillStyle = "rgba(38,56,88,0.16)";
+      ctx.fillRect(0, 0, W, H);
+      const phase = (turn * 7) % 11;
+      if (phase === 0 || phase === 1) {
+        ctx.fillStyle = phase === 0 ? "rgba(255,255,240,0.22)" : "rgba(255,255,240,0.12)";
+        ctx.fillRect(0, 0, W, H);
+        const lx = ((turn * 137) % Math.max(1, W - 60)) + 30;
+        ctx.strokeStyle = "rgba(255,255,235,0.9)";
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.moveTo(lx, 0);
+        ctx.lineTo(lx - 10, H * 0.35);
+        ctx.lineTo(lx + 8, H * 0.5);
+        ctx.lineTo(lx - 6, H * 0.78);
+        ctx.lineTo(lx + 2, H);
+        ctx.stroke();
+      }
+    } else if (rain.id === "heavy") {
+      ctx.fillStyle = "rgba(38,56,88,0.07)";
+      ctx.fillRect(0, 0, W, H);
     }
   }
 }
@@ -294,9 +735,9 @@ function updateStat() {
   const s = M.countStates(grid, turn);
   const flam = M.countFlammable(grid) || 1;
   document.getElementById("stat").innerHTML =
-    `第 <b>${turn}</b> 轮 · 燃烧 <b style="color:#F65C0A">${s.burning}</b> 格 · ` +
+    `第 <b>${turn}</b> 轮 · 燃烧 <b style="color:${stateColor(A.BURN, "#FF4400")}">${s.burning}</b> 格 · ` +
     `灰烬 <b>${s.ash}</b> 格 · 烧毁率 <b>${(s.ash / flam * 100).toFixed(1)}%</b> · ` +
-    `湿隔离带 <b style="color:#4E8FCB">${s.wetline}</b> 格 · ` +
+    `湿隔离带 <b style="color:${stateColor(A.WET, "#2FA8E8")}">${s.wetline}</b> 格 · ` +
     (rescue.crews > 0 ? `已扑救 <b style="color:#2E6FB8">${suppressed}</b> 格` : `<b>无消防队</b>`);
 }
 
@@ -327,18 +768,96 @@ function setRun(v) {
 }
 function tick() {
   if (!running) return;
-  const ms = Math.min(4000, Math.max(40, 1000 / speed));
+  const ms = Math.min(4000, Math.max(40, 1000 / roundsPerSec()));
   timer = setTimeout(() => { oneStep(); tick(); }, ms);
 }
 
 /* ---------- 交互 ---------- */
+/**
+ * 屏幕坐标 → 格子坐标
+ *
+ * 为什么直接减 getBoundingClientRect() 就够了，不用管滚动和缩放？
+ * 因为 rect 是**视口坐标**，已经包含了滚动偏移；
+ * 而 C = cell() 已经包含了缩放倍率。
+ * 两个因子各自在自己的层面被消化掉了，这里不需要额外补偿 ——
+ * 这也是为什么把缩放做成"只改 cell()"能一次到位：
+ * 命中检测自动跟着缩放走，不会出现"看着在 A、点下去在 B"。
+ */
 function cellFromEvent(e) {
   const r = cv.getBoundingClientRect();
+  const C = cell();
   return {
-    x: Math.floor((e.clientX - r.left) / CELL),
-    y: Math.floor((e.clientY - r.top) / CELL),
+    x: Math.floor((e.clientX - r.left) / C),
+    y: Math.floor((e.clientY - r.top) / C),
   };
 }
+
+/* ---------- 放大模式的开关与滚轮 ----------
+ *
+ * 用户明确要求"正常模式下滚轮控制不了地图大小"，
+ * 所以这里**不能在 document 上无条件监听 wheel** ——
+ * 那会连页面正常滚动都一起吃掉（用户想滚到下面看图表就滚不动了），
+ * 是非常讨厌的体验。
+ *
+ * 正确做法是两级判断：
+ *   ① 只有指针在画布区域内才处理
+ *   ② 只有放大模式才改缩放；不在放大模式就**什么都不做**
+ *      （连 preventDefault 都不调，让浏览器照常滚页面）
+ */
+const wrapEl = document.getElementById("cvwrap");
+const zoomBtn = document.getElementById("zoomb");
+const zoomHint = document.getElementById("zoomHint");
+
+function setZoomMode(on) {
+  zoomed = on;
+  wrapEl.classList.toggle("zoomed", on);
+  zoomBtn.classList.toggle("on", on);
+  zoomBtn.textContent = on ? "⤡" : "⤢";
+  zoomBtn.title = on ? "退出放大模式" : "放大查看整张地图（滚轮可缩放）";
+  zoomHint.hidden = !on;
+  if (!on) zoom = 1;      // 退出时复位，免得下次进来还是上次的倍数
+  resize(); draw();
+}
+
+zoomBtn.onclick = (e) => {
+  e.stopPropagation();    // 别让点击穿到画布上去点火
+  setZoomMode(!zoomed);
+  showToast(zoomed
+    ? "已进入放大模式 —— 滚轮缩放，在图上点一下照样能点火"
+    : "已退出放大模式");
+};
+
+/* 滚轮缩放。注意 passive: false —— 否则 preventDefault 无效，
+   一缩放页面就跟着一起滚，手感很差。 */
+cv.addEventListener("wheel", (e) => {
+  // ① 不在放大模式：完全不处理，页面照常滚动
+  if (!isZoomMode()) return;
+
+  // ② 在放大模式：吃掉这次滚动事件，改缩放
+  e.preventDefault();
+
+  const before = zoom;
+  const next = e.deltaY < 0 ? zoom * ZOOM_STEP : zoom / ZOOM_STEP;
+  zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, next));
+  if (zoom === before) return;   // 已经到边界，别白重绘
+
+  /* 缩放时"以光标下的格子为锚点"。
+     不做这件事的话，放大后画面会往左上角跑 ——
+     用户盯着的地方反而跑出视口，得反复滚动去找，很难用。
+     做法：记录光标相对画布的可滚动坐标，缩放后按同样的**比例位置**滚回去。 */
+  const r = cv.getBoundingClientRect();
+  const cx = e.clientX - r.left;                   // 光标在画布内的位置
+  const cy = e.clientY - r.top;
+  const ratioX = (wrapEl.scrollLeft + cx) / (r.width || 1);
+  const ratioY = (wrapEl.scrollTop + cy) / (r.height || 1);
+
+  resize(); draw();
+
+  const r2 = cv.getBoundingClientRect();
+  wrapEl.scrollLeft = ratioX * r2.width - (e.clientX - r2.left);
+  wrapEl.scrollTop = ratioY * r2.height - (e.clientY - r2.top);
+}, { passive: false });
+
 let dragging = false;
 
 cv.addEventListener("mousedown", e => {
@@ -359,45 +878,167 @@ cv.addEventListener("mousemove", e => {
 });
 window.addEventListener("mouseup", () => { dragging = false; });
 
-document.getElementById("play").onclick = () => {
-  if (snaps.length === 0) {
-    for (let k = 0; k < 2; k++) {
-      grid = M.igniteAt(grid, Math.floor(rng() * grid.cols), Math.floor(rng() * grid.rows), M.IGNITION_CAUSES[0]);
-    }
-    crews = M.createCrews(rescue, grid);
+/** 判断地图上还有没有"活着"的火 */
+function hasLiveFire() {
+  for (let i = 0; i < grid.state.length; i++) {
+    const s = grid.state[i];
+    if (s === A.EMBER || s === A.HEAT || s === A.BURN) return true;
   }
-  setRun(!running);
+  return false;
+}
+
+/* ---------- 开始 / 暂停 ----------
+ *
+ * 语义已改：开始**只启动演化，绝不替你点火**。
+ * 点火完全交给人 —— 在地图上点哪里，哪里起火；
+ * 或按「随机点火」随机点两处。
+ * 这样"火从哪起"始终由你决定，实验才说得清是"谁造成了什么"。
+ */
+document.getElementById("play").onclick = () => {
+  if (running) { setRun(false); return; }
+  if (!hasLiveFire()) {
+    showToast("还没有火 —— 在地图上点一下点火，或按「随机点火」");
+    return;
+  }
+  setRun(true);
 };
 document.getElementById("step").onclick = () => { setRun(false); oneStep(); };
+
+/* ---------- 随机点火：固定两处，且一定点在可燃的地上 ----------
+ *
+ * 为什么不用「随机抽两个坐标」？
+ * 亚欧大陆那张图有一多半是海，随手抽两个坐标很可能全落在水里，
+ * 于是看起来像是什么都没发生、以为按钮坏了。
+ * M.igniteRandom 只在可燃的陆地格里抽样，保证一次真的点着两处。
+ */
 document.getElementById("ignite").onclick = () => {
   setRun(false);
-  for (let k = 0; k < 3; k++) {
-    grid = M.igniteAt(grid, Math.floor(rng() * grid.cols), Math.floor(rng() * grid.rows), M.IGNITION_CAUSES[0]);
+  const before = grid.state.slice();
+  grid = M.igniteRandom(grid, 2, M.IGNITION_CAUSES[0], rng);
+  let lit = 0;
+  for (let i = 0; i < grid.state.length; i++) {
+    if (before[i] === A.NORMAL && grid.state[i] !== before[i]) lit++;
+  }
+  if (lit === 0) {
+    showToast("这片地已经没得可烧了 —— 换一张地图，或先按「重置」");
+    return;
   }
   if (crews.length === 0) crews = M.createCrews(rescue, grid);
+  if (snaps.length === 0) snaps.push(M.countStates(grid, 0));
   draw(); updateStat();
+  showToast(`🎲 随机点燃了 2 处`);
 };
+
+/* ---------- 海拔视图 ---------- */
+document.getElementById("elev").onclick = () => {
+  const g = grid.elevation;
+  if (!g) {
+    showToast("这张图没有高程数据（比如自己画的图），海拔视图用不了");
+    return;
+  }
+  showElevation = !showElevation;
+  const b = document.getElementById("elev");
+  b.classList.toggle("primary", showElevation);
+  b.textContent = showElevation ? "🏔 海拔视图 · 开" : "🏔 海拔视图";
+  buildLegend();
+  draw();
+  showToast(
+    showElevation
+      ? "已切到海拔视图 —— 越亮越高。火/灰烬/湿带仍是原色，方便看火和地形的关系"
+      : "已切回植被视图"
+  );
+};
+
 document.getElementById("reset").onclick = () => {
   setRun(false);
   rng = M.makeRng(params.seed);
-  grid = M.createGrid(params);
-  crews = []; snaps = []; turn = 0; suppressed = 0; cut = 0;
-  draw(); updateStat();
+  grid = buildMap();
+  afterMapChange();
 };
 
-/* 速度 */
+/* 倍速 */
 const spd = document.getElementById("spd");
-spd.oninput = () => {
-  speed = Number(spd.value);
+function applySpeed() {
+  speedMul = Number(spd.value);
+  const rps = roundsPerSec();
   document.getElementById("spdLabel").textContent =
-    speed < 1 ? `${Math.round(speed * 1000)} 毫秒/轮` : `${speed} 轮/秒`;
-};
+    `${speedMul}× · ${rps % 1 === 0 ? rps : rps.toFixed(2)} 轮/秒`;
+  // 运行中改速度要立刻生效：重排一次定时器，
+  // 否则要等当前这一拍走完才用上新速度，手感上像"卡了一下"。
+  if (running) { if (timer) { clearTimeout(timer); timer = null; } tick(); }
+}
+spd.oninput = applySpeed;
 document.getElementById("spdChips").innerHTML =
-  [[0.5, "0.5×超慢"], [1, "1×"], [3, "3×"], [8, "8×"], [20, "20×"]]
+  [[0.25, "0.25×最慢"], [0.5, "0.5×"], [1, "1×正常"], [1.5, "1.5×"], [2, "2×最快"]]
     .map(([v, l]) => `<div class="chip" data-v="${v}">${l}</div>`).join("");
 document.querySelectorAll("#spdChips .chip").forEach(c => {
-  c.onclick = () => { spd.value = c.dataset.v; spd.oninput(); };
+  c.onclick = () => { spd.value = c.dataset.v; applySpeed(); };
 });
+
+/* ---------- 快进 ----------
+ * 一次性把接下来 N 轮算完，不经过定时器 ——
+ * 所以它不是"更快地播放"，而是"跳过播放、直接给结果"。
+ *
+ * 两个关键实现细节：
+ *
+ * ① 循环体必须和 oneStep() **完全同构**。
+ *    第一版我图省事自己拼了一版调用，结果把 stepGrid 的
+ *    参数顺序写错了（它是 `(grid, params, turn, rng)`，四参无 crews，
+ *    我多传了一个 crews，于是 turn 收到数组、rng 收到数字）。
+ *    这种错误在"跑起来看着好像也没崩"的掩护下特别隐蔽，
+ *    而且会让快进出来的结果和逐轮跑出来的**对不上** ——
+ *    实验数据一旦不可复现，整个沙盒的意义就没了。
+ *    所以这里逐行对照 oneStep 来写，宁可重复也不要"聪明"。
+ *
+ * ② 只在最后 draw 一次。
+ *    中间 200 轮的画面没人看得见，画了纯属浪费；
+ *    一帧一帧画会让"快进"变成"更慢的播放"。
+ */
+const FASTFORWARD_ROUNDS = 200;
+document.getElementById("fast").onclick = () => {
+  /* 先确认有火。
+     一片没火的林子快进一万轮也不会有任何变化，
+     直接提示比默默空转好。 */
+  const st = grid.state;
+  let live = false;
+  for (let i = 0; i < st.length; i++) {
+    if (st[i] === A.EMBER || st[i] === A.HEAT || st[i] === A.BURN) { live = true; break; }
+  }
+  if (!live) { showToast("还没有火 —— 先在地图上点一下，或按「随机点火」"); return; }
+
+  setRun(false);
+  const t0 = performance.now();
+  let done = 0;
+  for (let k = 0; k < FASTFORWARD_ROUNDS; k++) {
+    const fire = M.stepGrid(grid, params, turn, rng);
+    const resc = M.stepCrews(
+      fire.grid,
+      crews.length > 0 ? crews : M.createCrews(rescue, fire.grid),
+      rescue, rng
+    );
+    crews = resc.crews;
+    suppressed += resc.suppressed;
+    cut += resc.cut;
+    grid = resc.grid;
+    snaps.push(M.countStates(grid, turn));
+    turn++;
+    done++;
+    /* 火烧完了就提前收工。
+       没必要为了凑够 200 轮而空转 —— 那样只会让用户以为"快进很慢"。 */
+    const s = M.countStates(grid, turn);
+    if (s.burning === 0 && s.ember === 0 && s.heating === 0) break;
+  }
+  const ms = Math.round(performance.now() - t0);
+
+  draw(); updateStat();
+  const s = M.countStates(grid, turn);
+  const spent = s.burning === 0 && s.ember === 0 && s.heating === 0;
+  showToast(
+    spent
+      ? `⏩ 火已熄灭（推进 ${done} 轮，用时 ${ms} ms）`
+      : `⏩ 快进 ${done} 轮（用时 ${ms} ms）`
+  );
+};
 
 /* 消防队 */
 const crewsEl = document.getElementById("crews");
@@ -410,6 +1051,8 @@ crewsEl.oninput = () => {
   else crews = [];
   draw(); updateStat();
 };
+/* 默认 0 支（对照组）。点按钮在 0 ⇄ 2 之间切换，
+   所以判断依据是"当前是否有队"，而不是"当前是不是 2"。 */
 document.getElementById("rescueToggle").onclick = () => {
   crewsEl.value = rescue.crews === 0 ? 2 : 0;
   crewsEl.oninput();
@@ -450,24 +1093,203 @@ document.getElementById("brush").oninput = (e) => {
   document.getElementById("brushLabel").textContent =
     brushRadius === 0 ? "单格" : `${brushRadius * 2 + 1} 格宽`;
 };
+
+/* ---------- 地图尺寸 ----------
+ * 精度提上来之后，尺寸不再"长宽同比例放大"——
+ * 默认已经是 160×90（14,400 格），再等比放到 4× 就是 640×360，
+ * 画布上每格连 1 像素都分不到，看图变成看噪点。
+ * 改成「高度基本不动，横向往外看」：视野更宽，
+ * 但每格的物理尺寸和画面颗粒度都保持稳定。
+ * 每项是 [宽倍率, 高倍率]，首档必须和 M.DEFAULT_PARAMS 对上。
+ */
+const MIN_COLS = 160, MIN_ROWS = 90;
+const SIZE_STEPS = [[1,1],[1.25,1],[1.6,1.1],[2,1.2],[2.5,1.3],[3,1.5],[4,1.7]];
+
+/** 比例尺是固定的：1 格永远是 10 米，所以拉大尺寸 = 往外多看一圈地 */
+function updateScaleUI() {
+  const wM = grid.cols * 10, hM = grid.rows * 10;
+  const km2 = (wM * hM) / 1e6;
+  const fmt = (v) => (v >= 1000 ? (v / 1000).toFixed(2) + " km" : v + " m");
+  document.getElementById("sizeLabel").textContent = `${grid.cols} × ${grid.rows} 格`;
+  document.getElementById("cellCount").textContent = (grid.cols * grid.rows).toLocaleString();
+  document.getElementById("realRange").textContent = `${fmt(wM)} × ${fmt(hM)}`;
+  document.getElementById("scaleSize").textContent = `${fmt(wM)} × ${fmt(hM)}`;
+  document.getElementById("scaleArea").textContent =
+    `${((wM * hM) / 10000).toFixed(1)} 公顷（${km2.toFixed(2)} km²）`;
+  document.getElementById("scaleBall").textContent =
+    `${((wM * hM) / (105 * 68)).toFixed(0)} 个`;
+  document.getElementById("scaleNote").textContent =
+    km2 >= 6
+      ? `比例尺固定：1 格 = 10 米。当前 ${km2.toFixed(1)} km²，已经接近一场真实山火的量级。`
+      : `比例尺固定：1 格 = 10 米。拉大尺寸不是「把格子拉大」，而是「往外多看一圈地」——` +
+        `面积随尺寸增长，单格代表的实际大小不变。真实山火动辄上万亩（>6 km²），把尺寸拉大就能对上这个量级。`;
+}
+
+/* ============================================================
+ * 地图操作子页面
+ * ============================================================ */
+
+const mask = document.getElementById("mapMask");
+document.getElementById("openMap").onclick = () => mask.classList.add("on");
+document.getElementById("mapClose").onclick = () => mask.classList.remove("on");
+mask.onclick = (e) => { if (e.target === mask) mask.classList.remove("on"); };
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") mask.classList.remove("on");
+});
+
+/* 四个分区切换 */
+document.querySelectorAll("#mapTabs button").forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll("#mapTabs button").forEach((x) => x.classList.remove("on"));
+    b.classList.add("on");
+    document.querySelectorAll(".mapPane").forEach((p) => {
+      p.hidden = p.dataset.pane !== b.dataset.tab;
+    });
+  };
+});
+
+/* 真实世界区域列表 */
+function renderRegions() {
+  const list = document.getElementById("regionList");
+  list.innerHTML = "";
+  M.REGIONS.forEach((r) => {
+    const [w, s, e, n] = r.bbox;
+    const midLat = ((s + n) / 2) * Math.PI / 180;
+    const realW = Math.round((e - w) * 111 * Math.cos(midLat));
+    const realH = Math.round((n - s) * 111);
+    const on = params.region === r.id;
+    const b = document.createElement("button");
+    b.className = "region" + (on ? " on" : "");
+    // 真实地图至少给到默认精度。以前这里写死 144×90，
+    // 是因为当时的默认才 80×50；现在默认已经是 160×90，
+    // 所以取两者的较大值，别把已经更细的图反而降下来。
+    const gc = Math.max(grid.cols, MIN_COLS);
+    const gr = Math.max(grid.rows, MIN_ROWS);
+    b.innerHTML =
+      `<span><b>${r.name}</b>${on ? '<i class="tagOn">当前</i>' : ""}` +
+      `<span class="d">${r.desc}</span>` +
+      `<span class="g">经度 ${w}° ~ ${e}° · 纬度 ${s}° ~ ${n}° · 实地约 ${realW} × ${realH} km` +
+      `（默认网格 ${gc}×${gr}，1 格 ≈ ${(realW / gc).toFixed(0)} km）</span></span>` +
+      `<span class="go">${on ? "重新载入" : "载入 ›"}</span>`;
+    b.onclick = () => {
+      setRun(false);
+      params.region = r.id;
+      if (params.cols < MIN_COLS) params.cols = MIN_COLS;
+      if (params.rows < MIN_ROWS) params.rows = MIN_ROWS;
+      rng = M.makeRng(params.seed);
+      grid = M.createRealWorld(params);
+      afterMapChange();
+      renderRegions();
+      mask.classList.remove("on");
+    };
+    list.appendChild(b);
+  });
+}
+renderRegions();
+
+/* 顶部卡片上的"当前是什么地图" */
+function updateMapNow() {
+  const el = document.getElementById("mapNow");
+  const region = params.region ? M.REGION_MAP[params.region] : null;
+  // 程序地形时直接报品种名，让人一眼看出"这次随出来的是什么脾气的地方"
+  const label = region
+    ? region.name
+    : grid.flavor
+      ? `随机器貌 · ${grid.flavor.name}`
+      : "程序生成地貌";
+  el.textContent = `当前：${label} · ${grid.cols}×${grid.rows} 格`;
+}
+
+/* 当前锁定的地貌品种。null = 不指定，由种子自己决定 */
+let flavorId = null;
+
+document.getElementById("size").oninput = (e) => {
+  setRun(false);
+  const st = SIZE_STEPS[Number(e.target.value)] || SIZE_STEPS[0];
+  sizeScale = st[0];
+  params.cols = Math.round((MIN_COLS * st[0]) / 2) * 2;
+  params.rows = Math.round((MIN_ROWS * st[1]) / 2) * 2;
+  rng = M.makeRng(params.seed);
+  grid = buildMap();
+  afterMapChange();
+  showToast(`地图已调整为 ${params.cols}×${params.rows} 格（共 ${(params.cols * params.rows).toLocaleString()} 格）`);
+};
+
+/* 随机换一片：换种子 + 换品种 —— 这是"不要每次都长一样"的关键 */
+document.getElementById("randTerrain").onclick = () => {
+  setRun(false);
+  params.region = "";
+  params.seed = M.nextSeed(params.seed);
+  // 品种也重新掷一次：和上一次不同才算"换了地方"
+  const pool = M.TERRAIN_FLAVORS.filter(f => f.id !== flavorId);
+  flavorId = pool[Math.floor(Math.random() * pool.length)].id;
+  rng = M.makeRng(params.seed);
+  grid = M.createTerrain(params, flavorId);
+  afterMapChange();
+  renderFlavors();
+  mask.classList.remove("on");
+  showToast(`🎲 ${grid.flavor.name} —— ${grid.flavor.desc}`);
+};
+
+/* 重新生成同品种：只换地形，不换脾气 */
+document.getElementById("realTerrain").onclick = () => {
+  setRun(false);
+  params.region = "";
+  params.seed = M.nextSeed(params.seed);
+  rng = M.makeRng(params.seed);
+  // flavorId 为 null 时让它自己按新种子挑
+  grid = M.createTerrain(params, flavorId ?? undefined);
+  afterMapChange();
+  renderFlavors();
+  mask.classList.remove("on");
+  showToast(`🏔 已重新生成：${grid.flavor.name}`);
+};
+
 document.getElementById("fillGrass").onclick = () => {
   setRun(false); rng = M.makeRng(params.seed);
   grid = M.createBlankGrid(params, "drygrass");
-  crews = []; snaps = []; turn = 0; suppressed = 0; cut = 0;
-  draw(); updateStat();
+  flavorId = null;
+  afterMapChange();
+  renderFlavors();
+  mask.classList.remove("on");
 };
-document.getElementById("randTerrain").onclick = () => {
-  setRun(false); rng = M.makeRng(params.seed);
-  grid = M.createGrid(params);
-  crews = []; snaps = []; turn = 0; suppressed = 0; cut = 0;
-  draw(); updateStat();
-};
+
+/* 地貌品种列表：点一下就换成那个品种 */
+function renderFlavors() {
+  const box = document.getElementById("flavorGrid");
+  const cur = grid.flavor?.id ?? null;
+  box.innerHTML = "";
+  M.TERRAIN_FLAVORS.forEach((f) => {
+    const b = document.createElement("button");
+    const on = cur === f.id;
+    b.className = "flav" + (on ? " on" : "");
+    b.innerHTML = `<b>${f.name}${on ? '<i class="tagOn">当前</i>' : ""}</b>` +
+                  `<span class="fd">${f.desc}</span>`;
+    b.onclick = () => {
+      setRun(false);
+      params.region = "";
+      flavorId = f.id;
+      params.seed = M.nextSeed(params.seed);
+      rng = M.makeRng(params.seed);
+      grid = M.createTerrain(params, flavorId);
+      afterMapChange();
+      renderFlavors();
+      showToast(`${f.name} —— ${f.desc}`);
+    };
+    box.appendChild(b);
+  });
+  const d = document.getElementById("realDesc");
+  if (d) d.textContent = flavorId
+    ? `沿用「${M.FLAVOR_MAP[flavorId].name}」品种，只换一套地形`
+    : "沿用当前品种，只换一套地形";
+}
 document.getElementById("clearFire").onclick = () => {
   setRun(false);
   grid = { ...grid, state: new Uint8Array(grid.state.length), age: new Uint8Array(grid.age.length) };
   crews = []; snaps = []; turn = 0; suppressed = 0; cut = 0;
   draw(); updateStat();
 };
+
 /* 地图存档：把植被/湿度/火情打包成 json 下载 */
 document.getElementById("saveMap").onclick = () => {
   const data = {
@@ -542,9 +1364,26 @@ document.querySelectorAll("#rainChips .chip").forEach(c => {
 });
 document.querySelector('#rainChips .chip[data-id="none"]').classList.add("on");
 
+/* 轻量提示条：告诉用户"这次随出来的是什么地方" */
+let toastTimer = null;
+function showToast(msg) {
+  let el = document.getElementById("toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "toast";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add("on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("on"), 2600);
+}
+
 /* 启动 */
-resize(); draw(); updateStat();
-document.getElementById("spdLabel").textContent = "3 轮/秒";
+renderFlavors();
+resize(); draw(); updateStat(); updateScaleUI(); updateMapNow();
+applySpeed();  // 让倍速标签与滑块初值对齐（1× · 3 轮/秒）
+crewsEl.oninput();  // 让"消防队"滑块/文案与 DEFAULT_RESCUE.crews = 0 对齐
 </script>
 </body>
 </html>

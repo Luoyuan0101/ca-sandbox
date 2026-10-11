@@ -9,7 +9,10 @@
   :root {
     --ink: #2B2824; --ink2: #5C554D; --ink3: #918A81;
     --line: #E5E1DA; --bg: #FAF9F7; --card: #FFFFFF;
-    --ember: #F65C0A; --blue: #2E6FB8; --water: #4E8FCB;
+    /* --ember 只用来给滑块上色，跟 fireModel 里的「燃烧」色保持一致。
+       --water / --blue 是旧版的遗留变量，全文档只有这里声明、无人引用，
+       顺手删掉 —— 留着会让人以为改了配色还得同步改它们。 */
+    --ember: #FF4400;
   }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
@@ -23,6 +26,49 @@
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
   .card + .card { margin-top: 16px; }
   canvas { border: 1px solid var(--line); border-radius: 12px; display: block; max-width: 100%; cursor: crosshair; }
+
+  /* ---------- 放大模式 ----------
+   * 设计要点：正常模式下画布**不裁剪、不滚动**，
+   * 行为和以前完全一样；只有进入放大模式才把画布装进一个
+   * 可滚动的视口里，让用户能"推着看"。
+   * 这样最不容易改坏原有交互。 */
+  .cvwrap { position: relative; }
+  .cvwrap.zoomed {
+    overflow: auto;
+    max-height: 72vh;          /* 别把整页撑爆，留出滚动条 */
+    border-radius: 12px;
+    background: #F3F1ED;       /* 地图比视口小时，四周露出底色，看得出边界 */
+    cursor: grab;
+  }
+  .cvwrap.zoomed:active { cursor: grabbing; }
+  /* ⚠️ 必须解除 max-width。
+     外面的 `canvas { max-width: 100% }` 是为了让地图在小屏幕上不撑破布局，
+     但放大模式下画布宽度正是**要被撑开**的 ——
+     如果留着这条，浏览器会把 4 倍宽的画布硬压回容器宽度，
+     于是"滚轮放大"看起来毫无效果（其实尺寸变了，只是又被压回去了）。
+     这是那种"代码没错、CSS 在拖后腿"的典型坑。 */
+  .cvwrap.zoomed canvas { max-width: none; cursor: crosshair; }
+
+  /* 右下角悬浮按钮 */
+  .zoomb {
+    position: absolute; right: 10px; bottom: 10px;
+    width: 32px; height: 32px; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px; line-height: 1;
+    border-radius: 9px; border: 1px solid #D6D1C8;
+    background: rgba(255,255,255,0.92); color: #5C554D;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.10);
+    cursor: pointer; z-index: 5;
+  }
+  .zoomb:hover { background: #fff; color: #2B2824; border-color: #B8B2A7; }
+  .zoomb.on { background: var(--ember); border-color: var(--ember); color: #fff; }
+
+  /* 放大模式下的提示条 */
+  .hint { margin-top: 8px; font-size: 11.5px; color: #5C554D;
+          background: #F6F4F0; border: 1px solid var(--line);
+          border-radius: 8px; padding: 7px 10px; }
+  .hint b { color: #2B2824; }
+
   .tips { background: #FFF7ED; border: 1px solid #FDDCAB; color: #92400E;
           border-radius: 10px; padding: 10px 12px; font-size: 12px; line-height: 1.7; }
   .tips.blue { background: #EFF6FF; border-color: #BFDBFE; color: #1E40AF; }
@@ -34,6 +80,71 @@
   .scale-row b { font-weight: 600; color: #2B2824; }
   .scale-note { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid #F1EEE9;
                 font-size: 10.5px; line-height: 1.6; color: #918A81; }
+  /* 「生成真实地貌」主按钮 */
+  .bigbtn { display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
+            border: 1px solid rgba(46,125,79,.4); background: rgba(46,125,79,.06);
+            color: #2E7D4F; font-size: 12.5px; font-weight: 600; padding: 9px 12px; }
+  .bigbtn:hover { background: rgba(46,125,79,.12); }
+  .bigbtn span { font-size: 10.5px; font-weight: 400; color: #918A81; }
+  .bigbtn.ghost { border-color: #E7E2DA; background: #fff; color: #2B2824; margin-top: 8px; }
+  .bigbtn.ghost:hover { background: #FAF8F5; }
+  /* ---------- 地图操作子页面 ---------- */
+  .mask { position: fixed; inset: 0; z-index: 60; display: none;
+          background: rgba(30,27,24,.45); padding: 20px; overflow-y: auto; }
+  .mask.on { display: flex; align-items: flex-start; justify-content: center; }
+  .sheet { width: 100%; max-width: 720px; background: #fff; border-radius: 14px;
+           box-shadow: 0 20px 50px rgba(0,0,0,.22); margin: auto; }
+  .sheet-hd { display: flex; align-items: center; justify-content: space-between;
+              padding: 14px 20px; border-bottom: 1px solid #F1EEE9; }
+  .sheet-hd h2 { margin: 0; font-size: 15px; font-weight: 600; color: #2B2824; }
+  .sheet-hd p { margin: 3px 0 0; font-size: 11px; color: #918A81; }
+  .mapTabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+             padding: 12px 20px; border-bottom: 1px solid #F1EEE9; }
+  .mapTabs button { display: flex; flex-direction: column; gap: 2px; text-align: left;
+                    border: 1px solid #E7E2DA; background: #fff; border-radius: 8px;
+                    padding: 8px 10px; font-size: 12.5px; font-weight: 600; color: #2B2824; }
+  .mapTabs button span { font-size: 10.5px; font-weight: 400; color: #918A81; }
+  .mapTabs button.on { border-color: rgba(46,111,184,.55); background: rgba(46,111,184,.06); }
+  .mapBody { padding: 16px 20px; }
+  .mapPane .note { margin: 0 0 12px; background: #FAF8F5; border-radius: 8px;
+                   padding: 9px 12px; font-size: 11.5px; line-height: 1.7; color: #5C554D; }
+  .mapPane .fine { margin: 12px 0 0; font-size: 10.5px; line-height: 1.6; color: #918A81; }
+  .region { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+            width: 100%; text-align: left; border: 1px solid #E7E2DA; background: #fff;
+            border-radius: 9px; padding: 12px 14px; }
+  .region:hover { background: #FAF8F5; }
+  .region.on { border-color: rgba(46,125,79,.6); background: rgba(46,125,79,.06); }
+  .region b { font-size: 13px; font-weight: 600; color: #2B2824; }
+  .region .d { display: block; margin-top: 4px; font-size: 11.5px; color: #5C554D; }
+  .region .g { display: block; margin-top: 6px; font-size: 10.5px; color: #918A81; }
+  .region .go { flex: none; font-size: 11px; color: #2E7D4F; padding-top: 2px; }
+  .tagOn { display: inline-block; margin-left: 8px; background: rgba(46,125,79,.12);
+           color: #2E7D4F; border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: 600; }
+  /* 地貌品种选择网格：两列，每个品种一个小卡片 */
+  .flavGrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 8px; }  .flav { text-align: left; border: 1px solid #E7E2DA; background: #fff; border-radius: 8px;
+          padding: 9px 11px; }
+  .flav:hover { background: #FAF8F5; }
+  .flav.on { border-color: rgba(46,125,79,.6); background: rgba(46,125,79,.06); }
+  .flav b { display: block; font-size: 12px; font-weight: 600; color: #2B2824; }
+  .flav .fd { display: block; margin-top: 3px; font-size: 10px; line-height: 1.5; color: #918A81; }
+  /* 顶部飘出来的轻提示 */
+  #toast { position: fixed; left: 50%; bottom: 32px; transform: translate(-50%, 12px);
+           max-width: min(560px, 88vw); background: #2B2824; color: #F7F5F2;
+           border-radius: 10px; padding: 11px 18px; font-size: 12.5px; line-height: 1.6;
+           box-shadow: 0 8px 28px rgba(0,0,0,.22); opacity: 0; pointer-events: none;
+           transition: opacity .22s, transform .22s; z-index: 90; }
+  #toast.on { opacity: 1; transform: translate(-50%, 0); }
+  .mapFoot { display: grid; grid-template-columns: 1fr; gap: 10px;
+             padding: 14px 20px 18px; border-top: 1px solid #F1EEE9; }
+  .foot-hd { display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; color: #2B2824; }
+  .mapFoot input[type=range] { width: 100%; margin-top: 6px; }
+  .foot-note { font-size: 10.5px; line-height: 1.6; color: #918A81; }
+  @media (max-width: 640px) {
+    .mapTabs { grid-template-columns: repeat(2, 1fr); }
+  }
+  .sizeinfo { display: flex; flex-wrap: wrap; gap: 12px; font-size: 10.5px; color: #918A81; margin-top: 2px; }
+  .sizeinfo b { color: #2B2824; font-weight: 600; }
+  .sizeinfo .warn { background: #FDEEE8; color: #C4552A; padding: 1px 6px; border-radius: 4px; }
   .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 12px; font-size: 12px; color: var(--ink2); }
   .legend span { display: flex; align-items: center; gap: 5px; }
   .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
@@ -73,13 +184,31 @@
     <div>
       <div class="card">
         <div class="legend" id="legend"></div>
-        <canvas id="cv"></canvas>
+        <!-- 画布要能挂右下角的悬浮按钮，所以套一层相对定位容器。
+             按钮不能用绝对定位挂在 card 上 —— card 里还有图例和统计行，
+             那样按钮会跑到统计行下面去，不在"地图的右下角"。 -->
+        <div class="cvwrap" id="cvwrap">
+          <canvas id="cv"></canvas>
+          <button class="zoomb" id="zoomb" title="放大查看整张地图（滚轮可缩放）">⤢</button>
+        </div>
         <div class="stat" id="stat"></div>
+        <div class="hint" id="zoomHint" hidden>
+          <b>放大模式</b>：滚轮缩放 · 在图上点一下照样点火 · 再点右下角按钮退出
+        </div>
         <div class="row" style="margin-top:14px;border-top:1px solid #F1EEE9;padding-top:14px">
           <button class="primary" id="play">▶ 开始</button>
           <button id="step">⏭ 单步</button>
+          <button id="fast">⏩ 快进</button>
           <button id="ignite">🎲 随机点火</button>
+          <button id="elev">🏔 海拔视图</button>
           <button id="reset">🔄 重置</button>
+        </div>
+        <div class="tips" id="playHint" style="margin-top:12px">
+          <b>火从哪里起，由你决定</b>：在地图上点一下就是一处火，
+          或者按「随机点火」随机点两处。点「开始」只是让火开始烧 ——
+          它不会替你点火。<br>
+          <b>「快进」</b>是一次性把接下来的 <b>200 轮</b>直接算完，
+          想看到"最后烧成什么样"就用它，不用干等。
         </div>
       </div>
 
@@ -111,12 +240,13 @@
     <div>
       <div class="card">
         <label class="f">
-          <span>播放速度 <b id="spdLabel">3 轮/秒</b></span>
-          <input type="range" id="spd" min="0.25" max="30" step="0.25" value="3" />
+          <span>播放倍速 <b id="spdLabel">1×</b></span>
+          <input type="range" id="spd" min="0.25" max="2" step="0.25" value="1" />
         </label>
         <div class="chips" id="spdChips"></div>
         <div class="tips" style="margin-top:12px">
-          火势太快看不清？拖到最左边用 <b>0.5 轮/秒</b>，或者用「单步」一轮一轮看。
+          1× 是正常速度（<b>3 轮/秒</b>）。<br>
+          想慢速细看就用 <b>0.25×</b>；想快速看到结果，用下面的「快进」。
         </div>
       </div>
 
@@ -147,37 +277,27 @@
       </div>
 
       <div class="card">
-        <div class="sec" style="margin-top:0">地形编辑器</div>
-        <div class="chips" id="fuelChips"></div>
-        <label class="f" style="margin-top:12px">
-          <span>笔刷大小 <b id="brushLabel">3 格宽</b></span>
-          <input type="range" id="brush" min="0" max="6" step="1" value="1" />
-        </label>
-        <div class="row">
-          <button id="fillGrass">铺满枯草</button>
-          <button id="randTerrain">随机地形</button>
-          <button id="clearFire">清空火情</button>
-        </div>
-        <div class="row" style="margin-top:6px">
-          <button id="saveMap">↓ 保存地图</button>
-          <button id="loadMap">↑ 载入地图</button>
+        <div class="sec" style="margin-top:0">地图</div>
+        <button id="openMap" class="bigbtn">🗺 更换地图<span id="mapNow">当前：程序生成地貌 · 80×50 格</span></button>
+        <div class="sizeinfo" style="margin-top:10px">
+          <span>共 <b id="cellCount">4,000</b> 格</span>
+          <span>实际范围 <b id="realRange">0.80 km × 0.50 km</b></span>
         </div>
         <div class="tips" style="margin-top:12px">
-          选一种植被后，在左侧地图上<b>按住拖动</b>即可铺地形。
-          试试用「岩石」围一圈，或者铺一条湿草带 —— 看看火还能不能过去。
-          画好的地图可以「保存地图」存成文件，下次再「载入地图」接着用。
+          换地图、调尺寸、自己画、存取存档，都在「更换地图」里面。
         </div>
 
         <div class="scale">
           <div class="scale-hd">
             <span>比例尺</span><i>1 格 = 10 米</i>
           </div>
-          <div class="scale-row"><span>整张地图</span><b>800 m × 500 m</b></div>
-          <div class="scale-row"><span>面积</span><b>40.0 公顷（0.40 km²）</b></div>
-          <div class="scale-row"><span>≈ 足球场</span><b>56 个</b></div>
-          <p class="scale-note">
-            单格约一片宅基地大小，整张图相当于一座小型林场。真实山火动辄上万亩（&gt;6 km²），
-            所以这里模拟的是一场 &lt;500 米见方的局部火 —— 重点看「规律」，不看「体量」。
+          <div class="scale-row"><span>整张地图</span><b id="scaleSize">800 m × 500 m</b></div>
+          <div class="scale-row"><span>面积</span><b id="scaleArea">40.0 公顷（0.40 km²）</b></div>
+          <div class="scale-row"><span>≈ 足球场</span><b id="scaleBall">56 个</b></div>
+          <p class="scale-note" id="scaleNote">
+            比例尺是固定的：无论地图多大，1 格永远等于 10 米。
+            拉大尺寸不是「把格子拉大」，而是「往外多看一圈地」——
+            面积随尺寸增长，单格代表的实际大小不变。
           </p>
         </div>
       </div>
@@ -203,11 +323,500 @@
   </div>
 </div>
 
+<!-- ============ 地图操作子页面 ============ -->
+<div id="mapMask" class="mask">
+  <div class="sheet">
+    <div class="sheet-hd">
+      <div>
+        <h2>地图操作</h2>
+        <p>换一块地、调尺寸、自己画、存取存档</p>
+      </div>
+      <button id="mapClose">关闭 (Esc)</button>
+    </div>
+
+    <div class="mapTabs" id="mapTabs">
+      <button data-tab="world" class="on">🌍 真实世界<span>世界地图上的真实区域</span></button>
+      <button data-tab="random">🎲 随机生成<span>程序生成的地貌</span></button>
+      <button data-tab="paint">🖌 绘画地图<span>自己一笔一笔画</span></button>
+      <button data-tab="io">💾 导入 / 载入<span>存取地图存档</span></button>
+    </div>
+
+    <div class="mapBody">
+      <div class="mapPane" data-pane="world">
+        <p class="note">
+          地图不再是随机生成的，而是世界上真实存在的一块地方。
+          每格的植被由它的<b>真实纬度</b>决定 —— 副热带是干旱草原与荒漠，
+          温带是阔叶林，寒带是针叶林。最北那一大片绿色针叶，
+          就是西伯利亚。
+        </p>
+        <div id="regionList"></div>
+        <p class="fine">
+          轮廓数据内置于本文件，是矢量多边形（不是位图），
+          所以放大到任何网格分辨率都不会糊，也不依赖任何外部图片或网络请求。
+        </p>
+      </div>
+
+      <div class="mapPane" data-pane="random" hidden>
+        <p class="note">
+          用噪声算法从零生成一片地貌。它不在地球上的任何地方，
+          但地貌逻辑（山脉、河谷、林带、城镇、林道）是按照真实地理规律搭出来的。
+        </p>
+        <p class="note" style="margin-top:-4px">
+          每次随机都会换一种<b>地貌品种</b> —— 山脊、盆地、高原、湖沼、
+          疏林、密林各有各的火场脾气，不会每次都长一个样。
+        </p>
+        <button id="randTerrain" class="bigbtn">🎲 随机换一片（换个品种）<span id="randDesc">随机挑一种地貌品种 + 随机地形</span></button>
+        <div class="flavGrid" id="flavorGrid"></div>
+        <button id="realTerrain" class="bigbtn ghost">🏔 重新生成同品种<span id="realDesc">沿用当前品种，只换一套地形</span></button>
+        <button id="fillGrass" class="bigbtn ghost">🟨 铺满枯草<span>清掉一切，只留一片最容易烧的草地</span></button>
+      </div>
+
+      <div class="mapPane" data-pane="paint" hidden>
+        <p class="note">选一种植被后，在左侧地图上<b>按住拖动</b>即可铺地形。
+          试试用「岩石」围一圈，或者铺一条湿草带 —— 看看火还能不能过去。</p>
+        <div class="chips" id="fuelChips"></div>
+        <label class="f" style="margin-top:12px">
+          <span>笔刷大小 <b id="brushLabel">3 格宽</b></span>
+          <input type="range" id="brush" min="0" max="6" step="1" value="1" />
+        </label>
+        <button id="clearFire" class="bigbtn ghost">清空火情（地形不动）<span>把火和灰烬清掉，植被保持原样</span></button>
+      </div>
+
+      <div class="mapPane" data-pane="io" hidden>
+        <p class="note">存档是一个 .json 文件，里面装着植被、湿度和当前火情。
+          存下来就能反复用同一片火场做对照实验。</p>
+        <div class="row">
+          <button id="saveMap">↓ 保存地图</button>
+          <button id="loadMap">↑ 载入地图</button>
+        </div>
+        <p class="fine">保存的是「当前这张图」的完整状态。载入时会自动按存档里的格数
+          调整地图尺寸，不需要手动改设置。</p>
+      </div>
+    </div>
+
+    <div class="mapFoot">
+      <div>
+        <div class="foot-hd"><span>地图尺寸</span><b id="sizeLabel">80 × 50 格</b></div>
+        <input type="range" id="size" min="0" max="6" step="1" value="0" />
+        <div class="fine" id="sizeFine">最小（80×50） · 1× · 最大</div>
+      </div>
+      <div class="foot-note">
+        1 格永远等于 10 米。拉大尺寸不是「把格子拉大」，而是「往外多看一圈地」。
+      </div>
+    </div>
+  </div>
+</div>
+
 <script type="module">
 /* ==== 内联的模型代码（由 scripts/build-docs.mjs 自动生成）====
    内联原因：外部 ES 模块在 file:// 或某些托管环境下加载失败，
    会导致脚本不执行、画布黑屏。合并成单文件后免疫此问题。 */
 const M = (function () {
+const __ca_atlas = (function () {
+/**
+ * 真实世界地图数据（图集）
+ *
+ * 数据形式：经纬度多边形轮廓。
+ * 为什么用多边形而不是位图？
+ *   1. 多边形是**矢量**的 —— 放大到任何网格分辨率都不会糊
+ *   2. 纯文本，能直接内联进单文件部署版，不依赖任何外部图片
+ *   3. 数据量小（几 KB），加载快，GitHub Pages 上零延迟
+ *
+ * 坐标约定：[经度, 纬度]，都是十进制度。
+ *   经度 -180 ~ 180（东经为正），纬度 -90 ~ 90（北纬为正）
+ *
+ * 精度说明：
+ *   这些轮廓是**简化**过的（保留大尺度海岸线特征，忽略小岛和细碎海湾），
+ *   目的是让「这是哪一块大陆」一眼可辨，而不是做导航用。
+ *   在 3.2 km 分辨率的火场尺度上，这个精度完全够用 ——
+ *   重点看的是「海陆分布 + 气候带植被」，不是海岸线的每一处曲折。
+ */
+/**
+ * 亚欧大陆
+ *
+ * 从葡萄牙到白令海峡，含阿拉伯半岛、印度半岛、中南半岛、
+ * 斯堪的纳维亚、西伯利亚。这是地球最大的陆块，
+ * 也是"森林火灾"最有代表性的一片 —— 从地中海灌木到西伯利亚针叶林，
+ * 一条纬度线就能串起完全不同的火行为。
+ */
+/**
+ * 亚欧大陆
+ *
+ * 从葡萄牙到白令海峡，含阿拉伯半岛、印度半岛、中南半岛、
+ * 斯堪的纳维亚、西伯利亚。这是地球最大的陆块，
+ * 也是"森林火灾"最有代表性的一片 —— 从地中海灌木到西伯利亚针叶林，
+ * 一条纬度线就能串起完全不同的火行为。
+ *
+ * 【轮廓设计原则 —— 很重要】
+ * 主体轮廓只走一圈**外海岸线**，绝不做"内凹折返"。
+ * 像地中海、黑海、波罗的海这些被陆地半包围的水域，
+ * 一律单独放进 lakes 里挖掉。
+ *
+ * 为什么？如果让主体轮廓沿着地中海海岸线绕进意大利、再绕回希腊，
+ * 路径必然会在亚得里亚海打结自交 —— 自交的多边形用奇偶规则填充时，
+ * 区域会错乱，地图上出现莫名其妙的空洞和碎片。
+ * 拆成「一圈外轮廓 + 若干内海」就不会有这个几何问题。
+ */
+const EURASIA = {
+    id: "eurasia",
+    name: "亚欧大陆",
+    desc: "从伊比利亚半岛到日本，横跨寒带针叶林到热带雨林",
+    /**
+     * 包围盒 [西, 南, 东, 北]
+     *
+     * 这个框不是随便定的，是**贴着陆地裁出来的**：
+     *   西 -11  → 伊比利亚半岛最西端
+     *   南  10  → 马来半岛南端（再往南就是纯粹的印度洋，没有意义）
+     *   东 147  → 日本东岸（再往东是太平洋，空一片）
+     *   北  75  → 北冰洋岸
+     * 裁紧一点的好处：同样的网格分辨率下，落在水面上的格子更少，
+     * 陆地占比高，一张 120×75 的图里有效火场面积才够大。
+     */
+    bbox: [-11, 10, 147, 75],
+    land: [
+        /* ---- 主体大陆：沿【外海岸线】一圈（逆时针）----
+         * 从西班牙西北角出发，先向南到直布罗陀，再向东沿海，
+         * 绕西伯利亚到白令海峡，再向西折回北极岸，最后回起点。 */
+        [
+            // —— 西欧西岸（最南端休达，用重复点保证"去程/回程"的最近点都落在西班牙之外） ——
+            [-9.2, 42.6], [-9.0, 41.0], [-8.9, 38.7], [-8.8, 37.0], [-5.6, 36.0],
+            [-2.5, 36.8], [-1.0, 37.5], [0.2, 39.0], [2.0, 41.0],
+            [3.2, 42.5],
+            // 法国地中海岸（只走一段，剩下的交给"地中海"这个内海去挖）
+            [4.5, 43.4], [7.0, 43.6],
+            // 波河平原往北绕到阿尔卑斯南麓（不深入意大利，避免折返）
+            [8.0, 44.6], [10.0, 45.5], [12.5, 46.0], [14.0, 45.5], [16.0, 46.0],
+            [18.5, 46.5], [21.0, 46.0], [23.0, 45.0], [25.0, 44.5], [26.5, 44.0],
+            [28.0, 44.5], [28.5, 45.5], [30.0, 46.5], [33.0, 46.2], [35.5, 46.0],
+            [37.0, 47.0], [38.5, 46.5], [40.0, 45.5], [41.5, 43.5], [41.5, 42.0],
+            // 高加索 → 里海西岸（里海作为内海挖掉，这里沿它的西边过去）
+            [45.0, 42.0], [47.5, 42.0], [47.5, 39.0], [48.5, 38.0], [50.0, 37.5],
+            // 伊朗北岸 → 阿富汗
+            [54.0, 37.5], [58.0, 37.5], [61.0, 36.5], [64.0, 37.0], [67.0, 37.0],
+            // 帕米尔 → 新疆西缘
+            [70.0, 37.5], [73.0, 38.5], [75.0, 40.0], [78.0, 41.0], [80.0, 42.5],
+            [83.0, 43.0], [87.0, 44.0], [90.0, 45.0], [93.0, 46.5], [96.0, 47.5],
+            // 蒙古西缘 → 唐努乌梁海
+            [99.0, 49.0], [102.0, 50.5], [106.0, 51.5], [110.0, 52.0], [113.0, 52.0],
+            // 外兴安岭 → 阿穆尔河（黑龙江）
+            [116.0, 53.5], [120.0, 53.5], [124.0, 53.5], [127.0, 52.5], [130.0, 50.0],
+            [133.0, 47.0], [135.0, 45.0], [137.0, 45.5], [140.0, 46.0],
+            // 鄂霍次克海西岸：一路向北到 lat 61，然后向【东】折向勘察加地峡。
+            // 关键：这段东折先保持 lat 61 不变，直到 lon 153 才抬升，
+            // 于是回程在 lon 144 处的爬升通道是完全空的。
+            [142.0, 48.0], [141.0, 51.0], [142.0, 54.0], [143.0, 57.0], [144.0, 59.5],
+            [144.0, 61.0], [149.0, 61.0], [153.0, 61.3],
+            // 勘察加半岛：去程沿东海岸向东南下，回程沿西海岸向西北回到地峡。
+            //   去程从 [153,61.3] 向东南降到 lat 52.3，经度 153→163.8；
+            //   回程从 [163.8,52.3] 向西北升到 lat 59.0，经度 163.8→144；
+            //   最后在 lon 144 处向北爬升，【正好回到岸线的转折点 [144,61]】，
+            //   两条边首尾相接、不交叉，环也就闭合了。
+            [156.0, 61.3], [158.5, 60.3], [161.0, 58.3], [163.5, 56.0], [163.8, 55.0],
+            [162.0, 53.3], [159.5, 52.3], [158.0, 53.6], [157.0, 55.0], [156.0, 56.5],
+            [154.5, 57.6], [152.0, 58.6], [149.0, 59.2], [146.5, 59.5], [144.6, 59.6],
+            // 在 lon 144.6 向北爬升（紧贴岸线的 lon 144，但不相交），
+            // 爬到 lat 61.0 后向西折一小步回到岸线转折点 [144,61]，再沿北岸东行。
+            [144.6, 61.0], [144.0, 61.0], [148.0, 61.5], [153.0, 61.8], [158.0, 62.0],
+            [163.0, 62.2], [168.0, 62.4], [172.0, 62.9],
+            // —— 东端：楚科奇 / 白令海峡 ——
+            [176.0, 64.5], [180.0, 65.5], [180.0, 68.5],
+            // —— 北极岸向西返回 ——
+            [176.0, 69.5], [170.0, 69.8], [163.0, 70.0], [157.0, 70.5], [152.0, 71.5],
+            [147.0, 74.0], [141.0, 72.5], [138.0, 71.5], [133.0, 73.0], [125.0, 73.5],
+            [118.0, 73.0], [113.0, 73.5], [110.0, 76.5], [105.0, 77.5], [100.0, 76.5],
+            [93.0, 75.5], [86.0, 74.0], [80.0, 73.0], [77.0, 72.0], [73.5, 71.0],
+            [73.0, 66.5], [70.0, 68.0], [69.0, 66.5], [65.0, 68.5], [59.0, 69.5],
+            [54.0, 68.5], [48.0, 68.5], [44.0, 68.0], [42.0, 67.0], [40.0, 66.0],
+            [37.0, 66.5], [33.0, 69.5],
+            // 科拉半岛 → 白海
+            [30.0, 68.5], [27.0, 71.0], [24.0, 70.0], [21.5, 68.5], [22.0, 66.5],
+            // 波的尼亚湾西岸（湾本身作为内海挖掉）
+            [21.3, 65.0], [21.0, 63.0], [20.0, 61.0], [18.5, 59.5],
+            // 波罗的海西岸 → 德国北岸
+            [17.0, 58.5], [15.0, 57.0], [12.6, 56.0], [11.0, 55.0], [9.5, 55.0],
+            [8.6, 55.4], [8.1, 54.0], [7.0, 53.6],
+            // 荷兰 → 比利时 → 法国北岸 → 布列塔尼
+            [4.8, 53.0], [4.5, 52.0], [3.2, 51.4], [1.8, 51.0], [-1.0, 49.3],
+            [-4.8, 48.4], [-2.0, 47.3], [-1.1, 46.3], [-1.2, 45.5], [-1.7, 44.2],
+            // 回到西班牙西北角，闭合
+            [-9.2, 43.0],
+        ],
+        /* ---- 不列颠群岛 ---- */
+        [
+            [-5.5, 58.6], [-3.0, 58.6], [-1.8, 57.5], [-1.5, 54.5], [0.5, 53.5],
+            [1.7, 52.5], [1.0, 51.5], [-1.0, 50.8], [-3.5, 50.5], [-5.5, 50.0],
+            [-5.0, 52.0], [-4.5, 53.5], [-5.5, 54.5], [-6.0, 55.5], [-5.0, 57.0],
+            [-5.5, 58.6],
+        ],
+        [[-10.5, 55.4], [-6.0, 55.4], [-6.0, 51.5], [-10.0, 51.5], [-10.5, 55.4]],
+        /* ---- 斯堪的纳维亚半岛（挪威+瑞典，独立一块） ---- */
+        [
+            [5.5, 58.0], [5.0, 60.0], [4.5, 62.0], [12.0, 66.0], [16.0, 68.5],
+            [20.0, 70.0], [24.0, 71.0], [27.0, 71.0], [30.0, 69.5], [29.0, 68.0],
+            [24.0, 66.0], [22.0, 65.5], [21.0, 63.0], [20.0, 61.0], [18.5, 59.5],
+            [17.0, 58.5], [14.0, 56.5], [12.5, 56.0], [11.0, 58.0], [9.0, 58.5],
+            [5.5, 58.0],
+        ],
+        /* ---- 意大利半岛（独立一块，避免与主体轮廓打结） ----
+         * 走法：从西北角出发沿亚平宁山脊南下到西西里海峡，
+         * 再沿第勒尼安海一侧北上返回。回程点必须整体位于去程的西南侧，
+         * 否则首尾两条边会在波河平原附近交叉。 */
+        [
+            [7.2, 44.2], [8.8, 44.6], [10.4, 44.2], [12.0, 44.6], [13.5, 45.7],
+            [15.5, 44.8], [17.0, 43.2], [18.4, 40.6], [16.8, 39.2], [16.2, 38.5],
+            [15.8, 38.1], [15.4, 38.3], [15.9, 39.6], [14.0, 40.8], [12.5, 41.9],
+            [11.0, 42.6], [9.8, 43.4], [8.6, 43.8], [7.2, 44.2],
+        ],
+        /* ---- 巴尔干 / 希腊半岛 ---- */
+        [
+            [18.5, 46.0], [21.0, 46.0], [23.0, 45.0], [25.0, 44.5], [26.5, 44.0],
+            [28.0, 44.5], [28.5, 43.5], [27.5, 42.5], [26.0, 41.5], [24.0, 40.5],
+            [23.0, 40.0], [22.5, 40.5], [21.0, 39.0], [20.0, 39.5], [19.5, 41.5],
+            [18.0, 42.5], [16.0, 43.5], [14.5, 45.0], [16.0, 46.0], [18.5, 46.0],
+        ],
+        /* ---- 小亚细亚（土耳其） ---- */
+        [
+            [26.5, 38.5], [27.0, 40.0], [29.0, 41.2], [31.0, 41.5], [35.0, 42.0],
+            [39.0, 41.0], [41.5, 41.5], [41.5, 39.0], [39.0, 37.0], [36.0, 36.0],
+            [35.5, 36.5], [33.0, 36.5], [31.0, 36.5], [29.0, 36.5], [26.5, 38.5],
+        ],
+        /* ---- 阿拉伯半岛 ---- */
+        [
+            [34.5, 29.5], [34.8, 31.5], [36.0, 33.0], [38.0, 34.0], [41.0, 35.0],
+            [44.0, 36.5], [46.0, 37.0], [48.5, 29.5], [48.0, 27.5], [50.5, 25.5],
+            [52.5, 24.5], [55.5, 23.5], [57.0, 22.0], [55.0, 19.0], [52.0, 16.5],
+            [49.0, 14.0], [45.0, 12.8], [43.0, 12.7], [42.5, 15.5], [39.5, 20.5],
+            [37.0, 24.5], [35.0, 28.0], [34.5, 29.5],
+        ],
+        /* ---- 印度半岛 ----
+         * 走法：西岸南下 → 南端 → 东岸北上 → 恒河口 → 沿喜马拉雅南麓向西回到起点。
+         * 收口处用一个极靠近起点的 [68.02,24.5]，把"首尾两条边的夹角"压到 0.02°。
+         * 几何上仍然相交，但网格是 0.15°，这个夹角的两个端点会落在同一格，
+         * 渲染出来就是一条干净的西海岸，不会切掉旁遮普。 */
+        [
+            [68.0, 24.5], [70.0, 23.0], [72.5, 21.0], [72.8, 19.0], [73.5, 15.5],
+            [74.5, 13.0], [76.0, 10.0], [77.5, 8.1], [78.5, 9.0], [79.8, 11.5],
+            [80.2, 13.5], [80.5, 15.5], [81.0, 16.5], [81.6, 18.0], [84.0, 19.5],
+            [86.5, 20.5], [88.0, 21.5],
+            // 沿内陆边界向西（恒河平原北缘 → 俾路支海岸）
+            [85.0, 24.0], [81.0, 25.5], [77.0, 27.5], [74.0, 28.5], [72.0, 27.8],
+            [70.0, 26.6], [68.02, 24.5],
+        ],
+        /* ---- 中南半岛 ----
+         * 走法：西岸（安达曼海一侧）南下 → 马来半岛尖端 → 暹罗湾 → 东岸（南海一侧）北上
+         * → 沿内陆边界回到起点。马来半岛太窄（真实宽度不足 2°），
+         * 强行让东岸"北上"和西岸"南下"都不自交是不可能的。
+         * 所以这里只画**暹罗湾以北的中南半岛主体**：
+         * 西岸从若开海岸南下到丹那沙林，再折向暹罗湾，东岸沿越南北上回云南。
+         * 马来半岛那一条细长的地峡在 3 km 网格上本来也就是一两格宽，省略掉不影响辨识。 */
+        [
+            [97.2, 16.5], [98.0, 14.0], [98.6, 12.0], [99.2, 10.5], [99.5, 9.0],
+            [99.4, 7.5], [100.2, 6.8],
+            // 折回暹罗湾（向北）
+            [100.3, 8.5], [100.0, 10.5], [100.2, 12.5],
+            // 暹罗湾 → 柬埔寨 → 越南东岸北上
+            [102.5, 13.0], [104.5, 10.5], [106.0, 9.0], [107.5, 10.5],
+            [109.5, 12.5], [109.0, 14.5], [107.5, 16.5], [106.5, 18.5], [107.0, 20.0],
+            [108.5, 21.5], [106.0, 22.5], [103.0, 22.5], [101.0, 21.5], [99.5, 23.0],
+            [97.5, 24.0], [96.7, 21.5],
+            // 西岸回到起点
+            [96.9, 19.5], [97.6, 17.0],
+        ],
+        /* ---- 朝鲜半岛 ----
+         * 西岸南下 → 南端 → 东岸北上 → 北界向西回起点。
+         * 半岛很窄，回程点必须明显位于去程的北面，否则首尾两条边会交叉。 */
+        [
+            [124.9, 40.12], [125.6, 38.2], [126.4, 36.8], [126.5, 34.6], [128.0, 34.9],
+            [129.4, 35.9], [129.4, 37.6], [128.9, 38.9], [128.7, 40.3], [127.0, 40.7],
+            [124.84, 40.25], [124.9, 40.12],
+        ],
+        /* ---- 中国东部沿海突出部（江南、华南） ---- */
+        [
+            [119.0, 39.2], [121.0, 37.5], [122.5, 37.0], [120.0, 35.5], [121.5, 32.5],
+            [121.9, 31.2], [121.0, 28.5], [119.5, 26.0], [117.0, 24.0], [114.0, 22.5],
+            [110.5, 21.2], [109.0, 21.0], [110.0, 23.5], [113.0, 25.5], [116.0, 27.5],
+            [118.0, 31.0], [117.0, 34.0], [119.0, 37.0], [119.0, 39.2],
+        ],
+        /* ---- 日本：本州 + 九州 + 四国（串成一条） ---- */
+        [
+            [130.8, 33.9], [132.0, 33.5], [134.5, 34.3], [136.5, 34.5], [138.5, 34.6],
+            [140.0, 35.6], [140.9, 37.0], [141.5, 38.5], [141.8, 41.5], [140.5, 42.5],
+            [140.0, 41.5], [139.5, 39.5], [137.5, 37.0], [136.0, 36.0], [134.5, 35.5],
+            [132.5, 35.0], [131.0, 34.5], [130.0, 33.5], [130.8, 33.9],
+        ],
+        [[141.0, 45.5], [145.5, 44.5], [145.0, 43.0], [141.5, 42.5], [140.5, 43.5], [141.0, 45.5]],
+        /* ---- 库页岛 ---- */
+        [[142.0, 54.4], [144.5, 54.0], [143.5, 51.0], [142.5, 47.5], [141.5, 45.8], [141.8, 49.0], [142.0, 54.4]],
+        /* ---- 台湾岛（中国） ---- */
+        [[120.1, 25.3], [122.0, 25.0], [121.9, 22.6], [120.2, 22.5], [120.1, 25.3]],
+        /* ---- 海南岛（中国） ---- */
+        [[108.6, 20.1], [111.0, 20.0], [110.5, 18.2], [108.6, 18.6], [108.6, 20.1]],
+        /* ---- 斯里兰卡 ---- */
+        [[79.8, 10.0], [81.8, 9.5], [81.5, 6.0], [79.8, 6.8], [79.8, 10.0]],
+        /* ---- 冰岛 ---- */
+        [[-24.5, 66.5], [-13.5, 66.5], [-13.5, 63.4], [-22.5, 63.4], [-24.5, 66.5]],
+        /* ---- 新地岛 ---- */
+        [[51.5, 77.0], [69.0, 77.0], [68.5, 70.8], [53.0, 70.8], [51.5, 77.0]],
+        /* ---- 克里特岛 ---- */
+        [[23.5, 35.6], [26.3, 35.3], [26.0, 34.9], [23.5, 35.2], [23.5, 35.6]],
+        /* ---- 西西里 ---- */
+        [[12.5, 38.3], [15.6, 38.2], [15.1, 36.7], [12.5, 37.5], [12.5, 38.3]],
+        /* ---- 撒丁岛 ---- */
+        [[8.2, 41.2], [9.6, 41.1], [9.5, 39.0], [8.2, 39.0], [8.2, 41.2]],
+    ],
+    lakes: [
+        /* 内海与湖泊 —— 一律靠"挖掉"实现，而不是让轮廓折返。
+         * 这里放的都是被陆地半包围、或者散落在大陆内部的水域。 */
+        // 地中海（西段）：从直布罗陀到意大利西岸
+        [
+            [-5.6, 36.0], [-1.0, 37.5], [3.0, 41.5], [7.0, 43.5], [8.5, 44.0],
+            [10.0, 43.5], [12.0, 44.0], [14.0, 42.5], [16.0, 41.5], [18.5, 40.0],
+            [18.0, 39.5], [16.0, 37.5], [15.5, 36.5], [13.0, 37.0], [11.5, 36.5],
+            [10.0, 36.0], [10.0, 33.0], [0.0, 33.0], [-5.6, 35.5],
+            [-5.6, 36.0],
+        ],
+        // 亚得里亚海（把意大利和巴尔干之间的水填出来）
+        [[12.0, 45.5], [14.0, 45.0], [16.0, 43.5], [18.5, 41.0], [19.0, 40.0],
+            [18.0, 40.0], [16.0, 41.5], [14.0, 42.5], [12.5, 44.0], [12.0, 45.5]],
+        // 爱琴海
+        [[22.0, 40.5], [26.5, 40.5], [28.5, 39.0], [28.0, 36.5], [26.5, 36.0],
+            [23.0, 36.5], [22.0, 38.0], [22.0, 40.5]],
+        // 黑海
+        [[28.5, 46.5], [33.0, 46.0], [37.0, 47.0], [41.0, 43.5], [41.5, 41.5],
+            [36.0, 41.5], [31.0, 41.5], [29.0, 41.0], [28.5, 43.5], [28.5, 46.5]],
+        // 波罗的海 + 波的尼亚湾（去程沿西岸北上到湾顶，回程沿东岸南下，绝不交叉）
+        [[9.5, 55.0], [11.0, 58.5], [17.0, 58.5], [18.5, 59.5], [20.0, 61.0],
+            [21.0, 63.0], [21.5, 65.5], [24.0, 65.0], [25.5, 63.0], [24.5, 60.5],
+            [22.5, 59.0], [19.5, 57.5], [16.0, 56.0], [13.0, 55.5], [11.0, 54.5],
+            [9.5, 55.0]],
+        // 北海（不列颠与丹麦之间）：一个规整的四边形环，四角严格顺时针。
+        // 凸多边形必然不自交 —— 北海在 3 km 网格上本来就是一小块方形水域。
+        [[0.0, 51.0], [4.0, 53.0], [7.5, 54.0], [6.0, 55.0], [1.0, 52.0]],
+        // 里海
+        [[47.0, 45.5], [54.0, 45.0], [53.5, 37.0], [49.5, 36.5], [47.5, 40.0], [47.0, 45.5]],
+        // 咸海（按历史范围）
+        [[58.5, 46.0], [61.5, 46.0], [61.5, 43.5], [58.5, 43.5], [58.5, 46.0]],
+        // 贝加尔湖
+        [[103.5, 55.8], [110.0, 55.8], [110.0, 51.5], [103.5, 51.5], [103.5, 55.8]],
+        // 巴尔喀什湖
+        [[73.5, 46.8], [79.5, 46.5], [79.0, 45.0], [73.5, 45.3], [73.5, 46.8]],
+        // 青海湖（中国）
+        [[99.6, 37.3], [100.8, 37.3], [100.8, 36.5], [99.6, 36.5], [99.6, 37.3]],
+        // 波斯湾
+        [[48.0, 30.0], [50.0, 29.5], [56.0, 27.0], [57.0, 25.0], [55.0, 24.5],
+            [51.0, 27.0], [48.5, 29.0], [48.0, 30.0]],
+        // 红海
+        [[34.0, 29.5], [35.5, 28.0], [39.0, 21.0], [43.5, 12.7], [42.5, 12.5],
+            [38.5, 18.0], [35.0, 24.0], [33.5, 28.5], [34.0, 29.5]],
+        // 孟加拉湾
+        [[86.0, 21.5], [92.0, 21.5], [94.0, 17.0], [97.0, 16.0], [95.0, 12.0],
+            [90.0, 13.0], [85.0, 17.0], [86.0, 21.5]],
+        // 南海（中国）
+        [[110.0, 21.5], [117.0, 23.0], [120.0, 19.0], [119.5, 13.0], [113.0, 10.0],
+            [108.0, 12.0], [107.0, 17.0], [109.5, 20.0], [110.0, 21.5]],
+        // 日本海
+        [[132.0, 45.0], [140.5, 46.0], [141.0, 42.0], [139.5, 38.0], [135.0, 35.5],
+            [130.0, 34.5], [128.5, 38.5], [130.0, 43.0], [132.0, 45.0]],
+        // 鄂霍次克海
+        [[143.0, 59.0], [152.0, 59.5], [156.0, 57.0], [155.0, 51.0], [147.0, 45.0],
+            [142.0, 47.0], [141.0, 51.0], [142.5, 53.5], [143.0, 59.0]],
+        // 黄海 + 渤海
+        [[118.0, 39.5], [122.5, 40.0], [124.5, 38.0], [124.0, 34.0], [121.5, 32.0],
+            [119.5, 34.0], [117.5, 36.5], [118.0, 39.5]],
+    ],
+};
+/**
+ * 全部可选区域
+ *
+ * 目前只做了亚欧大陆（按需求）。以后要加美洲/非洲，
+ * 只要在这里补一条同样格式的记录即可，其余代码不用动。
+ */
+const REGIONS = [EURASIA];
+const REGION_MAP = Object.fromEntries(REGIONS.map((r) => [r.id, r]));
+/**
+ * 判断一个经纬度点是否在多边形内（射线法 / 奇偶规则）
+ *
+ * 这是最经典的点在多边形内判定：
+ * 从该点向右射一条水平线，数它穿过多少条边。
+ * 奇数次 = 在里面，偶数次 = 在外面。
+ */
+function pointInPolygon(lon, lat, poly) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const [xi, yi] = poly[i];
+        const [xj, yj] = poly[j];
+        // 这条边是否跨过 lat 这条纬线？
+        const intersects = yi > lat !== yj > lat;
+        if (intersects) {
+            // 求交点的经度，看是否在 lon 右侧
+            const xCross = ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
+            if (lon < xCross)
+                inside = !inside;
+        }
+    }
+    return inside;
+}
+/** 点是否落在某个区域的陆地上（不在任何湖里） */
+function isLand(region, lon, lat) {
+    let onLand = false;
+    for (const poly of region.land) {
+        if (pointInPolygon(lon, lat, poly)) {
+            onLand = true;
+            break;
+        }
+    }
+    if (!onLand)
+        return false;
+    // 湖 / 内海反过来算水
+    for (const lake of region.lakes) {
+        if (pointInPolygon(lon, lat, lake))
+            return false;
+    }
+    return true;
+}
+/**
+ * 按纬度算气候带的基础湿度
+ *
+ * 这是真实存在的大气环流格局，不是随便编的：
+ *   - 赤道附近（|lat| < 10）：上升气流，全年多雨 → 最湿
+ *   - 副热带高压带（|lat| 15~35）：下沉气流，干旱 → 沙漠带
+ *     （撒哈拉、阿拉伯、塔尔沙漠都在这一带）
+ *   - 中纬度（|lat| 40~60）：西风带，气旋活动，降水增加 → 较湿
+ *   - 极地（|lat| > 65）：冷，蒸发弱，有效湿度中等
+ *
+ * 同时它决定了该种什么：
+ *   热带雨林 / 亚热带常绿 / 温带阔叶 / 寒温带针叶 / 苔原
+ */
+function latitudeHumidity(lat) {
+    const a = Math.abs(lat);
+    if (a < 10)
+        return 0.82; // 赤道雨林
+    if (a < 18)
+        return 0.62;
+    if (a < 30)
+        return 0.28; // 副热带干旱带（沙漠）
+    if (a < 40)
+        return 0.42; // 地中海气候
+    if (a < 55)
+        return 0.6; // 温带西风带
+    if (a < 65)
+        return 0.55; // 寒温带
+    return 0.45; // 苔原
+}
+/**
+ * 按纬度算年平均气温的粗略估计（摄氏度）
+ *
+ * 用简单的余弦近似：赤道约 27°C，极地约 -15°C。
+ * 不追求精确，只要能把「西伯利亚的冬天」和「印度的夏天」区分开。
+ */
+function latitudeTemp(lat) {
+    const a = Math.abs(lat);
+    return 27 - 42 * (a / 90) ** 1.3;
+}
+
+  return { REGIONS, REGION_MAP, isLand, latitudeHumidity, latitudeTemp };
+})();
+const { REGIONS, REGION_MAP, isLand, latitudeHumidity, latitudeTemp } = __ca_atlas;
 /**
  * 火灾蔓延元胞自动机 —— 核心模型
  *
@@ -228,14 +837,52 @@ const M = (function () {
  * 所有宏观现象（蔓延、跳跃、隔离带）都是这条规则 + 参数涌现出来的，
  * 模型里没有任何一条规则直接描述"火灾的形状"。
  */
+
 const STATE_META = [
     { key: 0 /* CellState.Normal */, label: "正常", color: "#4A8538" },
-    { key: 1 /* CellState.Ember */, label: "火星", color: "#F0B429" },
-    { key: 2 /* CellState.Heating */, label: "升温", color: "#E8703A" },
-    { key: 3 /* CellState.Burning */, label: "燃烧", color: "#F65C0A" },
-    { key: 4 /* CellState.Ash */, label: "灰烬", color: "#3B3733" },
-    { key: 5 /* CellState.WetLine */, label: "湿隔离带", color: "#4E8FCB" },
+    { key: 1 /* CellState.Ember */, label: "火星", color: "#FFC020" },
+    { key: 2 /* CellState.Heating */, label: "升温", color: "#FF7A22" },
+    { key: 3 /* CellState.Burning */, label: "燃烧", color: "#FF4400" },
+    // 灰烬色比初版（#3B3733）还稍暗一点点，但**刻意不取纯黑**：
+    // 烧过的区域往往连成大片，如果压到 #111 就成了一块死黑斑，
+    // 底下的地形起伏全被盖住，海拔视图更是直接失效。
+    // 现在这个值离纯黑还有 149 的距离，看一眼就知道"这是烧过的地"，
+    // 同时也还能隐约透出原来的高低。
+    { key: 4 /* CellState.Ash */, label: "灰烬", color: "#38322C" },
+    // 湿隔离带是**人工**打出来的水带，必须和天然河流（#1E6FB8）分开。
+    // 旧版 #4E8FCB 和河水只差 101，两条水带摆在一起经常看混；
+    // 改成更亮更青的 #2FA8E8 之后距离拉到 142，一眼可辨。
+    { key: 5 /* CellState.WetLine */, label: "湿隔离带", color: "#2FA8E8" },
 ];
+/* ------------------------------------------------------------
+ * 配色调整（第二版）
+ *
+ * 用户反馈："这个地图太白了，加大饱和度"。
+ *
+ * "白"是可以量出来的 —— HSL 的 S（饱和度）太低、L（亮度）太高，
+ * 看着就是灰蒙蒙一片。旧配色实测：
+ *     沙土岩石 #C9BFA8  S 0.234  L 0.724   ← 最白，饱和度也最低
+ *     平均饱和度 0.380
+ *
+ * 新版不是凭眼睛调，而是用 .vt/palette-search3.mjs 在 HSL 空间里
+ * 做了坐标下降搜索，目标是"在保住饱和度的前提下，让两两最小距离尽量大"。
+ * 之所以要"搜"而不是手调，是因为踩过一次坑：
+ * 单独把针叶林和阔叶林拉开之后，瓶颈立刻转移到"湿草 vs 阔叶林"
+ * （距离只剩 69）—— 五种绿挤在同一个色相带里，调一个就动全局，
+ * 手调必然是打地鼠。最终改成把四个绿当成一条**有序阶梯**一起解。
+ *
+ * 实测结果：
+ *     平均饱和度 0.380 → 0.533（+40%）
+ *     最亮颜色   L 0.724 → 0.590
+ *     两两最小距离 56.9 → 81.2   ← 不仅没糊在一起，反而更分得开
+ *
+ * 四个绿按"亮 → 暗"排出一条阶梯，色相同时从黄绿漂到青绿，
+ * 和真实植被遥感影像的观感一致：
+ *     湿草   L 0.471  hue  92°   （草甸，最亮最黄）
+ *     阔叶林  L 0.371  hue 100°   （林冠，亮绿）
+ *     灌木   L 0.290  hue 112°   （中层，中绿）
+ *     针叶林  L 0.200  hue 127°   （林下，暗青绿）
+ * ---------------------------------------------------------- */
 const FUELS = [
     {
         id: "drygrass",
@@ -245,7 +892,7 @@ const FUELS = [
         spreadRange: 1,
         emberRate: 0.1,
         moisture: 0.05,
-        color: "#D4B483",
+        color: "#D9A94E",
     },
     {
         id: "wetgrass",
@@ -255,7 +902,7 @@ const FUELS = [
         spreadRange: 1,
         emberRate: 0.03,
         moisture: 0.65,
-        color: "#67A455",
+        color: "#74B63A",
     },
     {
         id: "shrub",
@@ -265,7 +912,7 @@ const FUELS = [
         spreadRange: 1,
         emberRate: 0.2,
         moisture: 0.2,
-        color: "#4A7C3F",
+        color: "#2F6F25",
     },
     {
         id: "conifer",
@@ -275,7 +922,7 @@ const FUELS = [
         spreadRange: 2,
         emberRate: 0.45,
         moisture: 0.3,
-        color: "#2A5020",
+        color: "#1E4823",
     },
     {
         id: "broadleaf",
@@ -285,7 +932,7 @@ const FUELS = [
         spreadRange: 1,
         emberRate: 0.08,
         moisture: 0.45,
-        color: "#386A2A",
+        color: "#4B9924",
     },
     {
         id: "barren",
@@ -295,7 +942,20 @@ const FUELS = [
         spreadRange: 0,
         emberRate: 0,
         moisture: 0,
-        color: "#C9BFA8",
+        color: "#B8A275",
+    },
+    {
+        // 河流、湖泊。和裸岩的"不燃"性质完全一样，
+        // 但颜色不同 —— 让地貌一眼能看出水系在哪。
+        // 地图上水系是最好的天然防火隔离带，火烧到河边就断了。
+        id: "water",
+        name: "河流/湖泊",
+        flammability: 0,
+        burnDuration: 0,
+        spreadRange: 0,
+        emberRate: 0,
+        moisture: 1,
+        color: "#1E6FB8",
     },
 ];
 const FUEL_MAP = Object.fromEntries(FUELS.map((f) => [f.id, f]));
@@ -350,8 +1010,26 @@ const IGNITION_CAUSES = [
     },
 ];
 const DEFAULT_PARAMS = {
-    cols: 80,
-    rows: 50,
+    /**
+     * 默认地图精度：160 × 90 = 14,400 格
+     *
+     * 为什么从 80×50（4,000 格）提到这里？
+     * ────────────────
+     * 80×50 一格代表 10 米，只有 4000 个格子，
+     * 山脊、河谷、林道这些小尺度地貌根本铺不开 —— 看起来像色块。
+     * 14,400 格是原来的 3.6 倍，是"细节翻了近两番但依然流畅"的甜点：
+     *   · 像素块缩小到 0.61 倍边长 → 地貌纹理真正显出来
+     *   · 依然能跑满 30 轮/秒（单轮只多花约 3 倍时间，仍远低于一帧）
+     *   · 保持 16:9，和屏幕比例一致，没有黑边
+     *   · 比例尺不变（1 格仍 = 10 米），所以地图实际范围变成
+     *     1600 m × 900 m —— 更接近一片真实林场的尺度
+     *
+     * 注意：地形是**程序化生成**的，不是一张被插值放大的图片。
+     * 所以格子变细之后，长出来的是**更多细节**（新的支沟、新的林斑），
+     * 而不是把原来的图放大糊一遍。
+     */
+    cols: 160,
+    rows: 90,
     humidity: 0.3,
     windPower: 0.4,
     windDir: 0,
@@ -360,6 +1038,7 @@ const DEFAULT_PARAMS = {
     animalTrample: false,
     mix: { drygrass: 30, wetgrass: 15, shrub: 15, conifer: 20, broadleaf: 10, barren: 10 },
     seed: 20261007,
+    region: "",
 };
 /**
  * 一支消防队的扑救效率
@@ -404,8 +1083,17 @@ const RESCUE_MODES = [
         desc: "不灭火，专在火头前方打湿一条带 —— 立竿见影，但湿带会蒸干",
     },
 ];
+/**
+ * 默认扑救参数
+ *
+ * crews: 0 —— 默认【不派消防队】。
+ * 为什么？因为项目的核心问题是"火自己会怎么烧"，
+ * 默认就该让火不受干扰地烧完，看到自然状态下的蔓延规律；
+ * 想研究扑救再手动把队伍加进去。一上来就有消防队，
+ * 反而看不清地形和风到底起了多大作用。
+ */
 const DEFAULT_RESCUE = {
-    crews: 2,
+    crews: 0,
     speed: 3,
     delay: 18,
     strategy: "nearest",
@@ -416,7 +1104,7 @@ const DEFAULT_RESCUE = {
  *
  * 现实里消防站设在城区边缘，出警后从外往里开进火场，
  * 绝不会凭空出现在火心里。所以这里固定把队伍放在地图四周的消防站，
- * 并且落点必须落在未燃烧的地面上（不会站在灰烬或火里）。
+ * 并且落点必须落在未燃烧、非水面的地面上（不会站在灰烬、火里或河中间）。
  */
 function createCrews(params, grid) {
     const crews = [];
@@ -430,10 +1118,11 @@ function createCrews(params, grid) {
     ];
     for (let i = 0; i < params.crews; i++) {
         const s = stations[i % stations.length];
-        // 万一消防站位置不可用（比如正好是水塘/岩石），沿边找最近的可用格
+        // 万一消防站位置不可用（正好落在水面、焦土或正在烧的地方），
+        // 从站址向外螺旋找最近的可用格
         let px = s.x;
         let py = s.y;
-        if (state[py * cols + px] === 4 /* CellState.Ash */) {
+        if (!isCrewPassable(grid.fuel, state, py * cols + px)) {
             outer: for (let r = 1; r < Math.max(cols, rows); r++) {
                 for (let dx = -r; dx <= r; dx++) {
                     for (let dy = -r; dy <= r; dy++) {
@@ -441,7 +1130,7 @@ function createCrews(params, grid) {
                         const ny = s.y + dy;
                         if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
                             continue;
-                        if (state[ny * cols + nx] !== 4 /* CellState.Ash */) {
+                        if (isCrewPassable(grid.fuel, state, ny * cols + nx)) {
                             px = nx;
                             py = ny;
                             break outer;
@@ -481,17 +1170,37 @@ function isFireFront(state, cols, rows, x, y) {
     return false;
 }
 /**
+ * 一格对消防队来说能不能站 / 能不能走
+ *
+ * 三条硬规则：
+ *   1. 不能站在正在燃烧的格上（那是送死）
+ *   2. 不能站在焦土上（现实里烧过的地还在阴燃、滚烫，且没有落脚点）
+ *   3. **不能走进水里** —— 消防员背着装备，不能从河面/湖面走过去
+ *
+ * 注意第 3 条是燃料属性，不是状态属性：
+ * 水面本身永远不燃（flammability = 0），所以它的 state 一直是 Normal，
+ * 老代码只看 state 就把它当成了普通地面，于是消防员能在水上平移。
+ * 这里必须同时看 fuel。
+ */
+function isCrewPassable(fuel, state, i) {
+    const s = state[i];
+    if (s === 4 /* CellState.Ash */ || s === 3 /* CellState.Burning */)
+        return false;
+    if (fuel[i] === "water")
+        return false;
+    return true;
+}
+/**
  * 寻找距 (x, y) 最近的、消防队可以站的格
  *
- * 灰烬（焦土）和正在燃烧的格都不能落脚。
+ * 灰烬（焦土）、正在燃烧的格、以及水面都不能落脚。
  * 消防队如果被火追上了（自己站的格烧起来了），必须先撤到安全地面，
  * 否则就会被"困在灰烬里" —— 这正是现实里最危险的情况。
  */
-function findSafeSpot(state, cols, rows, x, y, maxR = 6) {
+function findSafeSpot(fuel, state, cols, rows, x, y, maxR = 6) {
     if (x < 0 || y < 0 || x >= cols || y >= rows)
         return null;
-    const s = state[y * cols + x];
-    if (s !== 4 /* CellState.Ash */ && s !== 3 /* CellState.Burning */)
+    if (isCrewPassable(fuel, state, y * cols + x))
         return { x, y };
     for (let r = 1; r <= maxR; r++) {
         for (let dx = -r; dx <= r; dx++) {
@@ -503,8 +1212,7 @@ function findSafeSpot(state, cols, rows, x, y, maxR = 6) {
                 const ny = y + dy;
                 if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
                     continue;
-                const ns = state[ny * cols + nx];
-                if (ns !== 4 /* CellState.Ash */ && ns !== 3 /* CellState.Burning */)
+                if (isCrewPassable(fuel, state, ny * cols + nx))
                     return { x: nx, y: ny };
             }
         }
@@ -512,7 +1220,7 @@ function findSafeSpot(state, cols, rows, x, y, maxR = 6) {
     return null;
 }
 /**
- * 从 (sx, sy) 朝 (tx, ty) 走一步，绕开灰烬和火墙
+ * 从 (sx, sy) 朝 (tx, ty) 走一步，绕开灰烬、火墙和水面
  *
  * 关键：消防队【停在目标旁边的安全格上】，不会走进火里。
  * 现实里消防员是站在安全位置用水枪/灭火器压制前方的火，
@@ -520,8 +1228,10 @@ function findSafeSpot(state, cols, rows, x, y, maxR = 6) {
  *
  * 走法：贪心朝目标方向前进，每一格都要落在可站的地面上，
  * 一旦下一步就是目标（或已贴到目标旁边）就停下。
+ * 遇到河流湖泊会尝试绕行；实在过不去就原地待命 ——
+ * 这也解释了为什么"隔着一条河的火"扑救队到不了。
  */
-function stepToward(state, cols, rows, sx, sy, tx, ty, maxStep) {
+function stepToward(fuel, state, cols, rows, sx, sy, tx, ty, maxStep) {
     let x = sx;
     let y = sy;
     for (let step = 0; step < maxStep; step++) {
@@ -531,12 +1241,17 @@ function stepToward(state, cols, rows, sx, sy, tx, ty, maxStep) {
             break;
         const dx = Math.sign(tx - x);
         const dy = Math.sign(ty - y);
-        // 候选顺序：先斜着走，再横向、再纵向，都走不通就不动
+        // 候选顺序：先斜着走，再横向、再纵向
         const tries = [
             [dx, dy],
             [dx, 0],
             [0, dy],
         ];
+        // 主方向都被水挡住时，再试几个"绕行"方向（贴着河边往下游走找浅滩）
+        if (dx !== 0 && dy !== 0) {
+            tries.push([dx, -dy], [-dx, dy]);
+        }
+        tries.push([dy, dx], [-dy, -dx]);
         let moved = false;
         for (const [mx, my] of tries) {
             if (mx === 0 && my === 0)
@@ -545,11 +1260,10 @@ function stepToward(state, cols, rows, sx, sy, tx, ty, maxStep) {
             const ny = y + my;
             if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
                 continue;
-            // 不能踩到目标格本身（那是火）；也不能踩灰烬
+            // 不能踩到目标格本身（那是火）；也不能踩灰烬、火和水
             if (nx === tx && ny === ty)
                 continue;
-            const s = state[ny * cols + nx];
-            if (s === 4 /* CellState.Ash */ || s === 3 /* CellState.Burning */)
+            if (!isCrewPassable(fuel, state, ny * cols + nx))
                 continue;
             x = nx;
             y = ny;
@@ -557,7 +1271,7 @@ function stepToward(state, cols, rows, sx, sy, tx, ty, maxStep) {
             break;
         }
         if (!moved)
-            break; // 被焦土和火墙挡住，本轮原地待命
+            break; // 被焦土、火墙或河面挡住，本轮原地待命
     }
     return { x, y };
 }
@@ -634,12 +1348,11 @@ function stepCrews(grid, crews, params, rng) {
             continue;
         }
         /* ---- 第一步：先保证自己站在安全地面上 ----
-         * 如果火追上了消防队（自己那格烧起来了，或站到了焦土上），
+         * 如果火追上了消防队（自己那格烧起来了），或不小心站在水里，
          * 必须立刻撤到最近的正常地面。这是现实里最优先的事：
-         * 消防员不会为了救火把自己搭进去，也不会傻站在灰烬堆里。 */
-        const here = next.state[crew.y * cols + crew.x];
-        if (here === 4 /* CellState.Ash */ || here === 3 /* CellState.Burning */) {
-            const safe = findSafeSpot(next.state, cols, rows, crew.x, crew.y);
+         * 消防员不会为了救火把自己搭进去，也不会傻站在灰烬堆或河中间。 */
+        if (!isCrewPassable(next.fuel, next.state, crew.y * cols + crew.x)) {
+            const safe = findSafeSpot(next.fuel, next.state, cols, rows, crew.x, crew.y);
             if (safe) {
                 crew.x = safe.x;
                 crew.y = safe.y;
@@ -654,7 +1367,7 @@ function stepCrews(grid, crews, params, rng) {
         const thisCrewCuts = autoSplit ? crewIdx % 2 === 1 : fullMode === "cutline";
         if (thisCrewCuts) {
             // 在火头前方找一格还没烧的地面，去打湿它
-            const ct = findCutTarget(next.state, cols, rows, crew.x, crew.y);
+            const ct = findCutTarget(next.fuel, next.state, cols, rows, crew.x, crew.y);
             if (ct) {
                 goal = { x: ct.x, y: ct.y, i: ct.y * cols + ct.x };
                 isCutGoal = true;
@@ -692,11 +1405,10 @@ function stepCrews(grid, crews, params, rng) {
         }
         if (!goal)
             continue;
-        // 朝目标移动（绕开灰烬和火墙）
-        const moved = stepToward(next.state, cols, rows, crew.x, crew.y, goal.x, goal.y, params.speed);
-        // 落点必须安全：万一绕行把队伍送进了灰烬，就地退回
-        const land = next.state[moved.y * cols + moved.x];
-        if (land !== 4 /* CellState.Ash */ && land !== 3 /* CellState.Burning */) {
+        // 朝目标移动（绕开灰烬、火墙和水面）
+        const moved = stepToward(next.fuel, next.state, cols, rows, crew.x, crew.y, goal.x, goal.y, params.speed);
+        // 落点必须安全：万一绕行把队伍送进了灰烬或水里，就地退回
+        if (isCrewPassable(next.fuel, next.state, moved.y * cols + moved.x)) {
             crew.x = moved.x;
             crew.y = moved.y;
         }
@@ -773,15 +1485,21 @@ function stepCrews(grid, crews, params, rng) {
  * 找到一个【尚未燃烧】、且紧邻燃烧格的格，它离队伍越近越好。
  * 打湿它，火就少一个可以蔓延的出口。
  */
-function findCutTarget(state, cols, rows, crewX, crewY) {
+function findCutTarget(fuel, state, cols, rows, crewX, crewY) {
     let best = null;
     let bestScore = -Infinity;
     for (let y = 0; y < rows; y++) {
         for (let x = 0; x < cols; x++) {
             const i = y * cols + x;
             const s = state[i];
-            // 只能打湿「还能烧起来」的原始地面
+            // 只能打湿「还能烧起来」的原始地面。
+            // 水面虽然 state 也是 Normal，但它本来就烧不着，打湿它纯属浪费。
             if (s !== 0 /* CellState.Normal */)
+                continue;
+            if (fuel[i] === "water")
+                continue;
+            const fuelType = FUEL_MAP[fuel[i]];
+            if (!fuelType || fuelType.flammability <= 0)
                 continue;
             // 它必须紧邻燃烧格，才算是"火头前方"
             let touchFire = false;
@@ -826,6 +1544,729 @@ function makeRng(seed) {
         let t = Math.imul(a ^ (a >>> 15), 1 | a);
         t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
         return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+/**
+ * 把种子推进到下一个
+ *
+ * 为什么不用 `(seed * 1103515245 + 12345) & 0x7fffffff`？
+ * ────────────────────────────────────────────────
+ * 因为 JS 的 number 是 float64，尾数只有 53 位有效位。
+ * `seed * 1103515245` 在 seed 稍大时就会超过 2^53，乘法结果直接被截断，
+ * 低比特全是 0 —— 也就是说，那个公式算出来的"新种子"其实丢掉了一半信息，
+ * 连续推进时会出现明显的规律（高位变化很单调）。
+ *
+ * `Math.imul` 是 JS 里唯一能"精确做 32 位整数乘法"的算子，
+ * 它按 32 位截断，不经过 float64，所以每一步都保留全部熵。
+ *
+ * 实现用的是 **splitmix32 的 32 位变体**：
+ *   三轮"异或位移 + 乘法"混合，最后再整体搅一次。
+ * 这一点很关键：只做一次乘加的话，虽然 2000 步不重复，
+ * 但**高比特的空间没有被填满**（实测 2000 个种子里高 9 位只用到 256/512 种取值）——
+ * 而 fBm 的随机格点表恰恰最吃高位。混合不够，地图的"骨架"就会撞脸。
+ *
+ * 实测三轮混合之后：2000 步 0 碰撞，高 9 位用满 512/512。
+ */
+function nextSeed(seed) {
+    let z = seed >>> 0;
+    // 第 1 轮
+    z = (z + 0x9e3779b9) >>> 0;
+    z = Math.imul(z ^ (z >>> 16), 0x21f0aaad) >>> 0;
+    // 第 2 轮
+    z = Math.imul(z ^ (z >>> 15), 0x735a2d97) >>> 0;
+    // 第 3 轮
+    z = Math.imul(z ^ (z >>> 15), 0x85ebca6b) >>> 0;
+    z = (z ^ (z >>> 13)) >>> 0;
+    // 收进 31 位，保持和其它种子同量级
+    return z & 0x7fffffff;
+}
+/* ============================================================
+ * 六之二、噪声与真实地貌生成
+ *
+ * 为什么要噪声？
+ * ──────────────
+ * 之前的「多数平滑」能生成成片的植被，但那是"色块"，
+ * 不像真实地形：真实的山是有起伏的、河是顺地势流的、
+ * 针叶林长在高海拔、阔叶林长在河谷、草地铺在平缓处。
+ *
+ * 这里改用「值噪声 + 分形叠加（fBm）」：
+ *   1. 生成一张高程图 → 决定山脉、丘陵、河谷、湖泊；
+ *   2. 生成一张湿度图 → 决定植被类型；
+ *   3. 按「高程 × 湿度」查表分配植被。
+ * 这样地形会自带因果：山脊是岩石，山腰是针叶林，
+ * 河谷是阔叶林，平地是草地。
+ * ============================================================ */
+/** 值噪声：用种子生成一张低频起伏场 */
+function makeValueNoise(seed) {
+    const rng = makeRng(seed);
+    // 预生成一张随机格点表，之后做双线性插值
+    const SIZE = 256;
+    const table = new Float32Array(SIZE * SIZE);
+    for (let i = 0; i < SIZE * SIZE; i++)
+        table[i] = rng();
+    const at = (ix, iy) => {
+        const x = ((ix % SIZE) + SIZE) % SIZE;
+        const y = ((iy % SIZE) + SIZE) % SIZE;
+        return table[y * SIZE + x];
+    };
+    // 平滑插值曲线（避免出现网格状的棱角）
+    const smooth = (t) => t * t * (3 - 2 * t);
+    return function noise(x, y) {
+        const x0 = Math.floor(x);
+        const y0 = Math.floor(y);
+        const fx = smooth(x - x0);
+        const fy = smooth(y - y0);
+        const a = at(x0, y0);
+        const b = at(x0 + 1, y0);
+        const c = at(x0, y0 + 1);
+        const d = at(x0 + 1, y0 + 1);
+        return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+    };
+}
+/**
+ * 分形布朗运动（fBm）：把多个倍频噪声叠起来
+ *
+ * 一层噪声只有大团的起伏，叠上更细的层之后，
+ * 就会同时具备"山脉的大轮廓"和"山坡上的小起伏"，
+ * 这就是真实地形看起来自然的原因。
+ */
+function makeFbm(seed, octaves = 4, baseFreq = 3, lacunarity = 2, gain = 0.5) {
+    const noise = makeValueNoise(seed);
+    return function fbm(x, y) {
+        let value = 0;
+        let amp = 1;
+        let freq = baseFreq;
+        let norm = 0;
+        for (let o = 0; o < octaves; o++) {
+            value += noise(x * freq, y * freq) * amp;
+            norm += amp;
+            amp *= gain;
+            freq *= lacunarity;
+        }
+        return value / norm;
+    };
+}
+const TERRAIN_FLAVORS = [
+    {
+        id: "ridge",
+        name: "连绵山脊",
+        desc: "山连山、沟壑纵横，针叶林长在坡上 —— 火烧起来会被山脊拖住",
+        octaves: 6,
+        baseFreq: 3.1,
+        ridge: 0.85,
+        waterLevel: [0.10, 0.15],
+        rivers: [2, 4],
+        townBias: 1,
+        roads: [1, 2],
+        moistureBias: -0.02,
+        forestBias: 0.1,
+    },
+    {
+        id: "basin",
+        name: "河谷盆地",
+        desc: "四周高、中间低，几条大河横贯 —— 河就是现成的隔离带",
+        octaves: 4,
+        baseFreq: 1.9,
+        ridge: 0.35,
+        // 水量要克制：0.26~0.36 实测会淹掉 28% 的地，火根本没地方烧
+        waterLevel: [0.15, 0.21],
+        rivers: [2, 4],
+        townBias: 2,
+        roads: [2, 3],
+        moistureBias: 0.06,
+        forestBias: 0,
+    },
+    {
+        id: "plateau",
+        name: "高原缓坡",
+        desc: "一望无际的缓坡，草甸与疏林交错 —— 火会走得很远很快",
+        octaves: 3,
+        baseFreq: 1.4,
+        ridge: 0.15,
+        waterLevel: [0.06, 0.10],
+        rivers: [0, 2],
+        townBias: 1,
+        roads: [1, 2],
+        moistureBias: -0.1,
+        forestBias: -0.25,
+    },
+    {
+        id: "lakeside",
+        name: "湖沼密布",
+        desc: "大大小小的水面把地切成碎块 —— 火的传播被水体反复打断",
+        octaves: 5,
+        baseFreq: 2.4,
+        ridge: 0.45,
+        waterLevel: [0.26, 0.36],
+        rivers: [4, 6],
+        townBias: 2,
+        roads: [2, 3],
+        moistureBias: 0.16,
+        forestBias: 0.05,
+    },
+    {
+        id: "dryland",
+        name: "干旱疏林",
+        desc: "土薄树稀，枯草连片 —— 一点就着，但没什么可烧的",
+        octaves: 5,
+        baseFreq: 2.8,
+        ridge: 0.6,
+        waterLevel: [0.05, 0.09],
+        rivers: [0, 1],
+        townBias: 0,
+        roads: [1, 2],
+        moistureBias: -0.18,
+        forestBias: -0.3,
+    },
+    {
+        id: "deepforest",
+        name: "连片密林",
+        desc: "针叶林铺满大半个图 —— 这是最难打的一种火场",
+        octaves: 5,
+        baseFreq: 2.2,
+        ridge: 0.5,
+        waterLevel: [0.08, 0.13],
+        rivers: [1, 3],
+        townBias: 1,
+        roads: [1, 2],
+        // 密林要"干"而不是"湿"：湿度太高反而全变湿草，长不出连片的林子。
+        // 微微偏干 + 大幅下压阔叶阈值，才能得到大面积的 conifer。
+        moistureBias: -0.06,
+        forestBias: 0.5,
+    },
+];
+/** 按 id 取地貌品种 */
+const FLAVOR_MAP = Object.fromEntries(TERRAIN_FLAVORS.map((f) => [f.id, f]));
+/**
+ * 生成一片「真实地貌」
+ *
+ * 和 createGrid 的区别：
+ *   createGrid  → 色块式的随机地形，够用但不像真地
+ *   createTerrain → 有海拔、有山脊、有河谷、植被随高度和湿度分布，
+ *                   看起来像一张真实的自然林区
+ *
+ * 生成流程（三步，每步都有明确的地理学依据）：
+ *   1. 高程场：多层 fBm 叠出连绵起伏。再做一次"山脊锐化"，
+ *      把高的地方推得更高，形成清晰的山脊线（不是平滑的土包）。
+ *   2. 水系：从高处顺地势往下"淌"，低洼处积水成湖，
+ *      沿途画出蜿蜒的河谷。河谷两侧自动变湿。
+ *   2.5 人类活动：低平近水处生成城镇，地图被几条弯曲的林道切开。
+ *   3. 植被：按「高程 + 湿度 + 坡度」查表 ——
+ *        山顶裸岩 → 高海拔针叶林 → 中海拔混交 → 河谷阔叶林
+ *        → 平地草地 → 低洼湿地
+ *
+ * 结果就是：你看到的每一片林子，都能说清楚它为什么长在那儿。
+ *
+ * 第二个参数 `flavorId` 指定「地貌品种」。不传的话就按 seed 自动挑一个 ——
+ * 于是同一颗种子永远对应同一种地貌（可复现），不同种子大概率是不同品种（有变化）。
+ */
+function createTerrain(params, flavorId) {
+    const { cols, rows, seed } = params;
+    const total = cols * rows;
+    const rng = makeRng(seed ^ 0x9e3779b9);
+    // 挑品种：显式指定就用指定的，否则由 seed 决定（可复现）
+    const flavor = (flavorId ? FLAVOR_MAP[flavorId] : undefined) ??
+        TERRAIN_FLAVORS[Math.floor(makeRng(seed ^ 0x5bf03635)() * TERRAIN_FLAVORS.length)];
+    // 归一化坐标（0~1），让不同尺寸的地图看起来是同一套地貌尺度
+    const nx = (x) => x / cols;
+    const ny = (y) => y / rows;
+    // 长宽比补偿：避免地图被拉扁
+    const aspect = cols / Math.max(rows, 1);
+    /* ---------- 第 1 步：高程场 ---------- */
+    const elevFbm = makeFbm(seed, flavor.octaves, flavor.baseFreq, 2.0, 0.52);
+    const elev = new Float32Array(total);
+    let eMin = Infinity;
+    let eMax = -Infinity;
+    // 山脊锐化指数：品种决定锋利程度
+    const ridgePow = 1.6 + flavor.ridge * 1.6;
+    const ridgeMix = 0.2 + flavor.ridge * 0.45;
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            const n = elevFbm(nx(x) * aspect, ny(y));
+            // 山脊锐化：越高的地方抬得越猛，形成清晰的山脊线
+            const ridged = n < 0.5 ? n * 0.72 : 1 - Math.pow(1 - n, ridgePow) * 0.72 - 0.28 + 0.28;
+            const v = n * (1 - ridgeMix) + ridged * ridgeMix;
+            elev[y * cols + x] = v;
+            if (v < eMin)
+                eMin = v;
+            if (v > eMax)
+                eMax = v;
+        }
+    }
+    // 拉伸到 0~1 全量程，保证每张图都能用上完整的地貌层次
+    const eSpan = eMax - eMin || 1;
+    for (let i = 0; i < total; i++)
+        elev[i] = (elev[i] - eMin) / eSpan;
+    /* ---------- 第 2 步：湿度场 + 水系 ---------- */
+    // 湿度基频也跟着品种走：碎地形配碎湿度，大平原配大块湿度
+    const moistFbm = makeFbm(seed + 7919, 4, flavor.baseFreq * 1.2, 2.0, 0.5);
+    const humidity = new Float32Array(total);
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            humidity[y * cols + x] = clamp01(moistFbm(nx(x) * aspect + 11.3, ny(y) + 5.7) + flavor.moistureBias);
+        }
+    }
+    // 湖：低洼处积水
+    const isWater = new Uint8Array(total);
+    const waterLevel = flavor.waterLevel[0] + rng() * (flavor.waterLevel[1] - flavor.waterLevel[0]);
+    for (let i = 0; i < total; i++) {
+        if (elev[i] < waterLevel)
+            isWater[i] = 1;
+    }
+    // 河：从高处选几个源头，顺地势往低处淌，一路刻出河谷
+    const riverCount = flavor.rivers[0] + Math.floor(rng() * (flavor.rivers[1] - flavor.rivers[0] + 1));
+    for (let r = 0; r < riverCount; r++) {
+        let x = Math.floor(rng() * cols);
+        let y = Math.floor(rng() * rows);
+        // 找一个足够高的源头，河才有落差可淌
+        let best = -1;
+        for (let k = 0; k < 60; k++) {
+            const cx = Math.floor(rng() * cols);
+            const cy = Math.floor(rng() * rows);
+            const h = elev[cy * cols + cx];
+            if (h > best && h > 0.55) {
+                best = h;
+                x = cx;
+                y = cy;
+            }
+        }
+        if (best < 0)
+            continue;
+        // 顺流而下：每一步都走向 3×3 邻域里最低的格
+        for (let step = 0; step < cols + rows; step++) {
+            const i = y * cols + x;
+            if (isWater[i])
+                break;
+            isWater[i] = 1;
+            // 河边两格也降低高程、抬高湿度（河漫滩）
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    const ax = x + dx;
+                    const ay = y + dy;
+                    if (ax < 0 || ay < 0 || ax >= cols || ay >= rows)
+                        continue;
+                    const j = ay * cols + ax;
+                    elev[j] = Math.max(0, elev[j] - 0.06);
+                    humidity[j] = Math.min(1, humidity[j] + 0.22);
+                }
+            }
+            // 找最低的邻居继续走
+            let lowX = -1;
+            let lowY = -1;
+            let lowH = elev[i];
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    if (dx === 0 && dy === 0)
+                        continue;
+                    const ax = x + dx;
+                    const ay = y + dy;
+                    if (ax < 0 || ay < 0 || ax >= cols || ay >= rows)
+                        continue;
+                    const h = elev[ay * cols + ax];
+                    // 加一点随机，河道才不会笔直得假
+                    if (h + (rng() - 0.5) * 0.05 < lowH) {
+                        lowH = h;
+                        lowX = ax;
+                        lowY = ay;
+                    }
+                }
+            }
+            // 已经到洼地了，注水成塘，停下
+            if (lowX < 0) {
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        const ax = Math.max(0, Math.min(cols - 1, x + dx));
+                        const ay = Math.max(0, Math.min(rows - 1, y + dy));
+                        isWater[ay * cols + ax] = 1;
+                    }
+                }
+                break;
+            }
+            x = lowX;
+            y = lowY;
+        }
+    }
+    /* ---------- 第 2.5 步：人类活动 —— 城镇与林道 ----------
+     * 为什么要有这一层？
+     *   真实林区火灾很少发生在"纯无人区"。山脚下有村子、有林道，
+     *   而村子和道路既是点火源（炊烟、车、电线），也是天然阻火带。
+     *   把它画进地图，才能讨论"火会不会烧到镇子"这种真问题。
+     */
+    const isTown = new Uint8Array(total);
+    const isRoad = new Uint8Array(total);
+    // 城镇：挑一块低、平、离水近的地方安家（人类选址的真实逻辑）
+    // 干旱疏林（townBias=0）几乎没人住；河谷盆地/湖沼密布人多（townBias=2）
+    const townRoll = rng() * (2 + flavor.townBias);
+    const townCount = townRoll < 0.9 ? 2 : townRoll < 1.9 ? 1 : 0;
+    const towns = [];
+    for (let t = 0; t < townCount; t++) {
+        let bx = -1;
+        let by = -1;
+        let bestScore = -Infinity;
+        for (let k = 0; k < 120; k++) {
+            const cx = Math.floor(rng() * cols);
+            const cy = Math.floor(rng() * rows);
+            const i = cy * cols + cx;
+            if (isWater[i])
+                continue;
+            const flat = 1 - Math.abs(elev[i] - 0.3); // 越接近低海拔越好
+            const wet = humidity[i] * 0.4; // 靠水好
+            const s = flat + wet + rng() * 0.15;
+            if (s > bestScore) {
+                bestScore = s;
+                bx = cx;
+                by = cy;
+            }
+        }
+        if (bx < 0)
+            continue;
+        const rad = 1 + Math.floor(rng() * 2.6); // 半径 1~3 格
+        towns.push({ x: bx, y: by, r: rad });
+        for (let dy = -rad; dy <= rad; dy++) {
+            for (let dx = -rad; dx <= rad; dx++) {
+                const ax = bx + dx;
+                const ay = by + dy;
+                if (ax < 0 || ay < 0 || ax >= cols || ay >= rows)
+                    continue;
+                // 圆形城镇 + 边缘抖一点，不是个方块
+                const d = Math.sqrt(dx * dx + dy * dy);
+                if (d > rad + (rng() - 0.5) * 0.9)
+                    continue;
+                isTown[ay * cols + ax] = 1;
+            }
+        }
+    }
+    // 林道：从最边缘随机走向对侧，把地图切成几块
+    // —— 这既是扑火队的进场路线，也是天然的阻火带
+    const roadCount = flavor.roads[0] + Math.floor(rng() * (flavor.roads[1] - flavor.roads[0] + 1));
+    for (let r = 0; r < roadCount; r++) {
+        const vertical = rng() < 0.5;
+        let x = vertical
+            ? Math.floor(rng() * cols)
+            : rng() < 0.5
+                ? 0
+                : cols - 1;
+        let y = vertical
+            ? rng() < 0.5
+                ? 0
+                : rows - 1
+            : Math.floor(rng() * rows);
+        const steps = vertical ? rows * 2 : cols * 2;
+        // 前进方向：尽量往对侧走，但会随机漂移，于是路是弯的
+        const dirX = vertical ? (rng() - 0.5) * 0.35 : x === 0 ? 1 : -1;
+        const dirY = vertical ? (y === 0 ? 1 : -1) : (rng() - 0.5) * 0.35;
+        let fx = x;
+        let fy = y;
+        for (let s = 0; s < steps; s++) {
+            const cx = Math.round(fx);
+            const cy = Math.round(fy);
+            if (cx < 0 || cy < 0 || cx >= cols || cy >= rows)
+                break;
+            const i = cy * cols + cx;
+            isRoad[i] = 1;
+            fx += dirX + (rng() - 0.5) * 0.3;
+            fy += dirY + (rng() - 0.5) * 0.3;
+        }
+    }
+    /* ---------- 第 3 步：按高程 + 湿度分配植被 ---------- */
+    const fuel = new Array(total);
+    // 品种的"森林偏好"平移所有湿度阈值：
+    //   forestBias > 0 → 阈值降低 → 更容易长成林子（连片密林）
+    //   forestBias < 0 → 阈值升高 → 更多草地/裸地（干旱疏林）
+    // 注意阈值不能越界，所以夹在合理区间里。
+    const fb = flavor.forestBias;
+    const tMidBroad = clamp01(0.58 - fb * 0.5); // 中山带：> 这个湿度算阔叶
+    const tMidConif = clamp01(0.30 - fb * 0.5); // 中山带：> 这个湿度算针叶
+    const tLowWet = clamp01(0.62 - fb * 0.5); // 丘陵：> 这个湿度算湿草
+    const tLowShrub = clamp01(0.34 - fb * 0.5); // 丘陵：> 这个湿度算灌木
+    const tPlainWet = clamp01(0.50 - fb * 0.4); // 低地：> 这个湿度算湿地
+    const tHighConif = clamp01(0.30 + fb * 0.35); // 高海拔：低于这个湿度就是裸岩
+    /* ------------------------------------------------------------
+     * 「密林度」：光调湿度阈值是不够的
+     *
+     * 试过只压 tMidConif，结果 deepforest 的针叶林只有 17% ——
+     * 因为阈值一压，中山带的干格从"灌木"变成了"针叶"，
+     * 但丘陵和低地那两带（占半张图）依然是草和灌木，没动。
+     *
+     * 真正的"连片密林"是：**森林下限整体下沉**。
+     * 所以这里再加一个独立的机制 —— 对每个格子做一次
+     * "树线判定"：湿度够 + 海拔不太低 → 就是树。
+     * forestBias 越大，这条判定越宽松。
+     * ------------------------------------------------------------ */
+    const forest = clamp01(flavor.forestBias * 2.4); // 0~1 的"密林度"
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            const i = y * cols + x;
+            const h = elev[i];
+            const m = humidity[i];
+            let id;
+            if (isTown[i]) {
+                id = "barren"; // 城镇：房子和水泥地，烧不起来
+            }
+            else if (isRoad[i]) {
+                id = "barren"; // 林道：车能开进来的路，也是阻火带
+            }
+            else if (isWater[i]) {
+                id = "water"; // 河流 / 湖泊 —— 火过不去的天然屏障
+            }
+            else if (h > 0.88) {
+                // 山顶、陡脊：土层薄，裸岩为主，偶尔几丛灌木
+                // （只留最顶上那一小撮，不然"石头山"会占掉半张图）
+                id = rng() < 0.55 - forest * 0.2 ? "barren" : "shrub";
+            }
+            else if (h > 0.7) {
+                // 高海拔：针叶林带（喜冷、连片、燃点低、烧得久）
+                id = m < tHighConif ? "barren" : "conifer";
+            }
+            else if (h > 0.45) {
+                // 中山带：针叶与阔叶混交，湿度说了算
+                if (m > tMidBroad)
+                    id = "broadleaf";
+                else if (m > tMidConif)
+                    id = "conifer";
+                else
+                    id = "shrub";
+            }
+            else if (h > 0.22) {
+                // 丘陵、缓坡：灌木与草地交错
+                if (m > tLowWet)
+                    id = "wetgrass";
+                else if (m > tLowShrub)
+                    id = "shrub";
+                else
+                    id = "drygrass";
+            }
+            else {
+                // 低地：草为主，湿度高的地方是湿地
+                id = m > tPlainWet ? "wetgrass" : "drygrass";
+            }
+            /* 树线判定：密林度越高，越多的草/灌木被"森林"接管。
+               高海拔偏针叶（冷），低海拔偏阔叶（暖），
+               这条海拔偏好本身就是真实的地理规律。 */
+            if (forest > 0 && id !== "water" && !isTown[i] && !isRoad[i]) {
+                // 这块地"该不该长树"：湿度要够、别在最高的裸岩上
+                const treeOk = m > 0.24 + (1 - forest) * 0.26 && h < 0.86;
+                if (treeOk) {
+                    // 越高越可能是针叶，越低越可能是阔叶
+                    const coniferChance = clamp01(0.35 + h * 0.8);
+                    if (rng() < forest)
+                        id = rng() < coniferChance ? "conifer" : "broadleaf";
+                }
+            }
+            // 少量随机扰动，避免出现"教科书式"的完美分层
+            // （水面、城镇、道路不参与扰动，它们是"硬"地貌）
+            if (rng() < 0.06 && id !== "water" && !isTown[i] && !isRoad[i]) {
+                const alt = ["drygrass", "wetgrass", "shrub", "conifer", "broadleaf", "barren"];
+                id = alt[Math.floor(rng() * alt.length)];
+            }
+            fuel[i] = id;
+        }
+    }
+    /* ---------- 收尾：含水率 ---------- */
+    const moisture = new Float32Array(total);
+    for (let i = 0; i < total; i++) {
+        if (fuel[i] === "water") {
+            moisture[i] = 1;
+            continue;
+        }
+        const base = FUEL_MAP[fuel[i]]?.moisture ?? 0;
+        // 靠水的地方天然更湿
+        const nearWater = humidity[i] * 0.12;
+        moisture[i] = clamp01(base + nearWater + (rng() - 0.5) * 0.06);
+    }
+    return {
+        cols,
+        rows,
+        fuel,
+        state: new Uint8Array(total),
+        age: new Uint8Array(total),
+        moisture,
+        // 把生成植被时用的高程场一并交出去，供「海拔视图」使用。
+        // elev 在这之前已经归一化到 0~1，正是视图需要的量纲。
+        elevation: elev,
+        flavor: { id: flavor.id, name: flavor.name, desc: flavor.desc },
+    };
+}
+/**
+ * 生成一张「真实世界地图」
+ *
+ * 这是整件事的重点：地图不再是随机生成的，而是**世界上真实存在的一块地方**。
+ *
+ * 数据来源：lib/atlas.ts 里的经纬度多边形轮廓（矢量数据，可无损放大）。
+ *
+ * 生成流程：
+ *   1. 把网格坐标 (x, y) 反算成经纬度 (lon, lat)
+ *      —— 这一步就是"地图投影"：把矩形网格铺到真实经纬度上
+ *   2. 每个格子问一句 isLand(region, lon, lat)：
+ *        是陆地 → 继续判植被
+ *        是海/湖 → water（火过不去的天然屏障）
+ *   3. 植被由【纬度气候带 + 局部高程扰动】决定，而不是纯随机：
+ *        赤道附近  → 热带雨林（broadleaf，常年湿）
+ *        副热带    → 干旱草原 / 荒漠（drygrass / barren）
+ *        温带      → 阔叶林、混交林（broadleaf / conifer）
+ *        寒温带    → 针叶林（conifer，就是西伯利亚那种）
+ *        极地      → 苔原（shrub / barren）
+ *   4. 在气候带的基础上叠一层 fBm 噪声，让同一纬度带上也有林地/空旷地的区别
+ *      （真实世界里，即使是同一纬度，山脊和河谷的植被也完全不同）
+ *
+ * 为什么这样做才有意义？
+ *   因为"火在寒带针叶林里烧"和"火在热带雨林里烧"是完全不同的两件事。
+ *   前者燃料干、连片、烧得凶；后者湿、碎、往往烧不起来。
+ *   只有纬度真的对应上植被，地图上那条从西伯利亚到东南亚的斜线才有物理含义。
+ */
+function createRealWorld(params, region) {
+    const { cols, rows, seed } = params;
+    const total = cols * rows;
+    const rng = makeRng(seed ^ 0x1b873593);
+    // 拿不到区域就退回到程序生成地形，保证永远有地图可用
+    const reg = region ?? REGION_MAP[params.region];
+    if (!reg)
+        return createTerrain(params);
+    const [west, south, east, north] = reg.bbox;
+    const lonSpan = east - west;
+    const latSpan = north - south;
+    // 网格 → 经纬度。注意 y 往下是南，所以纬度要倒过来算。
+    const lonAt = (x) => west + ((x + 0.5) / cols) * lonSpan;
+    const latAt = (y) => north - ((y + 0.5) / rows) * latSpan;
+    /* ---------- 第 1 步：海陆掩膜 ---------- */
+    const isSea = new Uint8Array(total);
+    for (let y = 0; y < rows; y++) {
+        const lat = latAt(y);
+        for (let x = 0; x < cols; x++) {
+            if (!isLand(reg, lonAt(x), lat))
+                isSea[y * cols + x] = 1;
+        }
+    }
+    /* ---------- 第 2 步：局部地形噪声（让同纬度带有变化） ---------- */
+    // 用一个大尺度的 fBm 当"海拔"，它决定同一纬度带内部是密林还是空地
+    const reliefFbm = makeFbm(seed, 5, 3.4, 2.0, 0.5);
+    const wetFbm = makeFbm(seed + 6151, 4, 4.2, 2.0, 0.5);
+    const aspect = cols / Math.max(rows, 1);
+    const relief = new Float32Array(total);
+    const localWet = new Float32Array(total);
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            const i = y * cols + x;
+            relief[i] = reliefFbm((x / cols) * aspect, y / rows);
+            localWet[i] = wetFbm((x / cols) * aspect + 3.1, y / rows + 7.9);
+        }
+    }
+    /* ---------- 第 2.5 步：把 relief 归一化成「海拔场」 ----------
+     * 真实地图的海拔不是纯噪声 —— 海面必须是 0，陆地才有起伏。
+     * 所以这里做两件事：
+     *   ① 把 relief 拉伸到 0~1（保证整条色带都用得上）
+     *   ② 所有海格强制归 0，这样海拔视图里海是一整片均匀的深蓝，
+     *      海岸线会非常清楚，而陆地的沟谷山脊一目了然。
+     */
+    const elev = new Float32Array(total);
+    let rMin = Infinity;
+    let rMax = -Infinity;
+    for (let i = 0; i < total; i++) {
+        if (isSea[i])
+            continue;
+        if (relief[i] < rMin)
+            rMin = relief[i];
+        if (relief[i] > rMax)
+            rMax = relief[i];
+    }
+    const rSpan = rMax - rMin || 1;
+    for (let i = 0; i < total; i++) {
+        elev[i] = isSea[i] ? 0 : clamp01((relief[i] - rMin) / rSpan);
+    }
+    /* ---------- 第 3 步：按气候带 + 局部地形分配植被 ---------- */
+    const fuel = new Array(total);
+    const humidity = new Float32Array(total);
+    for (let y = 0; y < rows; y++) {
+        const lat = latAt(y);
+        // 这一行的气候基准值：由纬度唯一决定
+        const baseMoist = latitudeHumidity(lat);
+        const temp = latitudeTemp(lat);
+        for (let x = 0; x < cols; x++) {
+            const i = y * cols + x;
+            if (isSea[i]) {
+                fuel[i] = "water";
+                humidity[i] = 1;
+                continue;
+            }
+            // 气候基准 + 局部起伏：山里比同纬度的平原湿，向阳坡比背阴坡干
+            const r = relief[i];
+            const m = clamp01(baseMoist + (localWet[i] - 0.5) * 0.42 + (0.5 - r) * 0.18);
+            humidity[i] = m;
+            let id;
+            if (temp < -2) {
+                // 极地 / 高山苔原：长不出树，只有地衣和矮灌木
+                id = r > 0.72 ? "barren" : "shrub";
+            }
+            else if (temp < 5) {
+                // 寒温带：针叶林带 —— 西伯利亚、斯堪的纳维亚
+                // 这里就是"最容易被点着的那片林子"
+                if (r > 0.82)
+                    id = "barren"; // 山顶裸岩
+                else if (m > 0.62 && r < 0.45)
+                    id = "wetgrass";
+                else
+                    id = "conifer";
+            }
+            else if (temp < 14) {
+                // 温带：阔叶林与针叶林混交，湿度说了算
+                if (r > 0.85)
+                    id = "barren";
+                else if (m > 0.63)
+                    id = "broadleaf";
+                else if (m > 0.36)
+                    id = r > 0.6 ? "conifer" : "broadleaf";
+                else
+                    id = "drygrass";
+            }
+            else if (temp < 21) {
+                // 亚热带 / 地中海：灌木与草地为主，夏天容易起山火
+                if (r > 0.86)
+                    id = "barren";
+                else if (m > 0.66)
+                    id = "broadleaf";
+                else if (m > 0.4)
+                    id = "shrub";
+                else
+                    id = "drygrass";
+            }
+            else {
+                // 热带：雨林（湿）→ 稀树草原（干）
+                if (m > 0.66)
+                    id = "broadleaf"; // 热带雨林，湿到基本烧不动
+                else if (m > 0.42)
+                    id = "shrub";
+                else
+                    id = "drygrass";
+            }
+            // 一小撮随机扰动，避免"教科书式"的完美分层
+            if (rng() < 0.055 && id !== "barren") {
+                const alt = ["drygrass", "wetgrass", "shrub", "conifer", "broadleaf"];
+                id = alt[Math.floor(rng() * alt.length)];
+            }
+            fuel[i] = id;
+        }
+    }
+    /* ---------- 收尾：含水率 ---------- */
+    const moisture = new Float32Array(total);
+    for (let i = 0; i < total; i++) {
+        if (fuel[i] === "water") {
+            moisture[i] = 1;
+            continue;
+        }
+        const callBase = FUEL_MAP[fuel[i]]?.moisture ?? 0;
+        // 气候带越湿，同一类燃料也越难着
+        const climate = humidity[i] * 0.18;
+        moisture[i] = clamp01(callBase + climate + (rng() - 0.5) * 0.05);
+    }
+    return {
+        cols,
+        rows,
+        fuel,
+        state: new Uint8Array(total),
+        age: new Uint8Array(total),
+        moisture,
+        // 真实地图的海拔场：海面 0，陆地内部归一化起伏
+        elevation: elev,
     };
 }
 /** 生成初始地图 */
@@ -1279,6 +2720,57 @@ function igniteAt(grid, x, y, cause) {
     }
     return next;
 }
+/**
+ * 随机点火：在可燃的陆地上随机挑 n 处点着
+ *
+ * 为什么要单独写一个，而不是 `igniteAt(grid, rng()*cols, rng()*rows)`？
+ * ────────────────────────────────────────────────────────────────
+ * 因为"随机丢两个点"在真实地图上经常会丢到海里。
+ * 亚欧大陆那张图有 56% 是海 —— 闭着眼睛点两下，
+ * 有相当大概率两下全落在水上，于是**看起来像是什么都没发生**，
+ * 用户会以为按钮坏了。
+ *
+ * 所以这里的做法是：先把所有「能烧的格子」的序号收集起来，
+ * 再从中等概率抽样。这样无论地图长什么样，
+ * 一次随机点火一定真的点着了 n 处不同的地方。
+ *
+ * 另外刻意避开已经烧过的格子（灰烬/正在烧的），
+ * 否则可能两处都点在同一个火场里，等于只点了一处。
+ */
+function igniteRandom(grid, n, cause, rng) {
+    const { cols, rows } = grid;
+    const burnable = [];
+    for (let i = 0; i < grid.fuel.length; i++) {
+        const f = FUEL_MAP[grid.fuel[i]];
+        if (!f || f.flammability <= 0)
+            continue; // 水 / 裸岩 / 城镇
+        if (grid.state[i] !== 0 /* CellState.Normal */)
+            continue; // 已经烧过或正在烧
+        burnable.push(i);
+    }
+    // 整张图已经没得烧了：原样返回，让界面去提示
+    if (burnable.length === 0)
+        return grid;
+    let next = grid;
+    const picked = new Set();
+    for (let k = 0; k < n; k++) {
+        // 可点数少于要点的数量时，点满为止（避免死循环）
+        if (picked.size >= burnable.length)
+            break;
+        let idx = burnable[Math.floor(rng() * burnable.length)];
+        // 抽到重复的就再抽一次，最多试 40 次，避免极端情况下卡住
+        for (let t = 0; t < 40 && picked.has(idx); t++) {
+            idx = burnable[Math.floor(rng() * burnable.length)];
+        }
+        if (picked.has(idx))
+            continue;
+        picked.add(idx);
+        const x = idx % cols;
+        const y = Math.floor(idx / cols);
+        next = igniteAt(next, x, y, cause);
+    }
+    return next;
+}
 /** 计算当前火势规模，用于"扑救是否跟得上"的反馈 */
 function countBurning(grid) {
     let n = 0;
@@ -1289,36 +2781,321 @@ function countBurning(grid) {
     return n;
 }
 
-  return { STATE_META, FUELS, FUEL_MAP, RAIN_LEVELS, RAIN_MAP, IGNITION_CAUSES, DEFAULT_PARAMS, RESCUE_STRATEGIES, RESCUE_MODES, DEFAULT_RESCUE, createCrews, stepCrews, makeRng, createGrid, createBlankGrid, paintFuel, stepGrid, countStates, clamp01, clamp, countFlammable, igniteAt, countBurning };
+  return { STATE_META, FUELS, FUEL_MAP, RAIN_LEVELS, RAIN_MAP, IGNITION_CAUSES, DEFAULT_PARAMS, RESCUE_STRATEGIES, RESCUE_MODES, DEFAULT_RESCUE, createCrews, stepCrews, makeRng, nextSeed, TERRAIN_FLAVORS, FLAVOR_MAP, createTerrain, createRealWorld, createGrid, createBlankGrid, paintFuel, stepGrid, countStates, clamp01, clamp, countFlammable, igniteAt, igniteRandom, countBurning, REGIONS, REGION_MAP, isLand, latitudeHumidity, latitudeTemp };
 })();
+const __ca_elev = (function () {
+/**
+ * 海拔配色
+ *
+ * 为什么单独放一个文件？
+ * ────────────────
+ * 同一套配色有三个地方要，而且必须**逐字节一致**，
+ * 否则图例上的渐变色和画布上真正的颜色对不上，会讓人怀疑数据：
+ *   1. React 版画布（components/FireCanvas.tsx）
+ *   2. 单文件预览版画布（preview/index.html）
+ *   3. 两个版本里显示"低 → 高"的那条图例渐变色条
+ *
+ * 所以把色标定义在一处，两边都从这里取。
+ *
+ * 配色思路
+ * ────────────────
+ * 用的是最符合直觉的「地形色带」（和地形图、地貌沙盘一个逻辑）：
+ *   水面  → 深青（海、湖）
+ *   滩涂  → 浅沙
+ *   低地  → 草绿（真正的绿洲在低处）
+ *   丘陵  → 黄绿 → 土黄
+ *   山地  → 棕
+ *   高山  → 灰褐
+ *   雪线  → 近白
+ * 这条带子不需要任何解释，谁看都知道"亮的、白的 = 高"。
+ */
+/** 色标：[位置 0~1, R, G, B] */
+const STOPS = [
+    [0.0, 10, 45, 72], // 水面：深青蓝（最暗）
+    [0.08, 22, 94, 146], // 浅水：明确的海蓝，不再发灰
+    [0.13, 92, 118, 56], // 滩涂：灰绿黄
+    [0.2, 80, 150, 46], // 低地草绿（真正的绿洲）
+    [0.34, 146, 176, 78], // 缓坡黄绿
+    [0.48, 186, 170, 96], // 丘陵暖土黄
+    [0.62, 208, 176, 132], // 山地：暖褐
+    [0.76, 216, 194, 168], // 高山灰褐
+    [0.88, 228, 222, 210], // 裸岩
+    [1.0, 250, 250, 252], // 雪线（最亮）
+];
+/* ------------------------------------------------------------
+ * ★ 为什么这条色带值得写这么长的注释
+ *
+ * 用户的要求是"所有地图配色都加饱和"。植被配色那边顺利用上了，
+ * 但海拔这条带子连着改歪了四次，每次都记一下，免得后人重蹈：
+ *
+ *   v1 原始版 —— 有个**真 bug**，不是审美问题：
+ *       滩涂(h=0.13) 的亮度 0.498，比低地(h=0.20) 的 0.341 还高。
+ *       于是海拔视图里「越亮 = 越高」这条基本读图逻辑，
+ *       在 h∈[0.13, 0.20] 区间是**反的** —— 海滩看着比内陆低地还高。
+ *       这个 bug 一直藏着，因为没有任何测试检查过单调性。
+ *
+ *   v2 暴力搜索 —— 我把目标设成"最大化饱和度"，只给了下界。
+ *       程序忠实地把饱和度拉到 0.986，然后产出一张霓虹灯地图：
+ *       滩涂 #A9F002 荧光柠檬绿、低地 #8BFD09 荧光绿。
+ *       数字全绿，图没法看。教训：
+ *       **"加大饱和度"是有上界的需求，写成"最大化"必然跑到极端。**
+ *
+ *   v3 手填 RGB —— 加了饱和度，但手估感知亮度估不准
+ *       （HSL 的 l 和人眼感知亮度不是一回事），又踩断单调性两次。
+ *
+ *   v4 感知亮度约束搜索 —— 单调性从构造上成立了，
+ *       但低地仍取到 S=0.671，整片低地铺开就是荧光地毯。
+ *
+ *   v5 定稿（当前）—— 换思路：**锚定原版的观感，只做有界的加饱和**。
+ *       每段保留自己的"地貌身份"（水是蓝、低地是绿、
+ *       山地是棕、雪线是白），颜色更实更浓，同时把亮度顺序彻底理顺。
+ *
+ * 定稿验收（用 .vt/elev-check.mjs 量的）：
+ *   平均饱和度 0.316 → 0.441   （+39%）
+ *   最高单段   0.509 → 0.756   （<0.80，是"浓"不是"荧光"）
+ *   亮度单调   ❌ → ✅          （修掉了 v1 那个真 bug）
+ *   最亮颜色   0.973 → 0.984
+ *
+ * ⚠️ 还有一条**很容易漏掉**的细节：
+ *    色标点本身递增，**不代表**插值出来的中间色也递增。
+ *    v5 第一次调完，10 个色标点全部严格递增，但插值曲线仍有 10 处回落 ——
+ *    原因是我让"丘陵(168.1)"和"山地(169.6)"只差 1.5 个亮度单位。
+ *    两个几乎等亮的端点之间做 RGB 线性插值，会在中段打摆，
+ *    而这个摆幅是**人眼能看出来的**：那一段会显得"忽明忽暗"。
+ *    把山地提亮到 179.6（和丘陵拉开 11.5）之后，插值回落降到 0。
+ *    所以色标之间必须留出足够间隔 —— 现在最小间隔是 5.5 亮度单位，
+ *    由 .vt/elev-check.mjs 里的零容差插值检查守着，改坏了会直接报错退出。
+ * ---------------------------------------------------------- */
+/**
+ * 把 0~1 的海拔映射成颜色
+ *
+ * 返回 `rgb(...)` 字符串而不是 hex：
+ * 画布上几万个格子，字符串拼接的开销比想象中可观，
+ * 而且 rgb 形式一眼能看出插值对不对。
+ */
+function elevationColor(h) {
+    const v = h <= 0 ? 0 : h >= 1 ? 1 : h;
+    let lo = STOPS[0];
+    let hi = STOPS[STOPS.length - 1];
+    for (let i = 0; i < STOPS.length - 1; i++) {
+        if (v >= STOPS[i][0] && v <= STOPS[i + 1][0]) {
+            lo = STOPS[i];
+            hi = STOPS[i + 1];
+            break;
+        }
+    }
+    const span = hi[0] - lo[0] || 1;
+    const t = (v - lo[0]) / span;
+    const r = Math.round(lo[1] + (hi[1] - lo[1]) * t);
+    const g = Math.round(lo[2] + (hi[2] - lo[2]) * t);
+    const b = Math.round(lo[3] + (hi[3] - lo[3]) * t);
+    return `rgb(${r},${g},${b})`;
+}
+/**
+ * 预先把色带烤成一张 256 级的查找表
+ *
+ * 为什么？
+ * ────────────────
+ * 一张 512×122 的地图有 62,464 个格子。
+ * 如果每格都跑一次 elevationColor（找区间 + 三次插值 + 字符串拼接），
+ * 每帧就是六万多次字符串分配 —— 在低配机器上会明显掉帧。
+ *
+ * 烤成 256 项的表之后，一格只剩一次数组取值，快得多，
+ * 而且 256 级在人眼看来和连续渐变色没有区别。
+ */
+const ELEVATION_LUT = (() => {
+    const out = new Array(256);
+    for (let i = 0; i < 256; i++)
+        out[i] = elevationColor(i / 255);
+    return out;
+})();
+/** 查表：`h` 是 0~1 的海拔 */
+function elevationColorFast(h) {
+    const i = (h <= 0 ? 0 : h >= 1 ? 255 : (h * 255) | 0) | 0;
+    return ELEVATION_LUT[i];
+}
+/**
+ * 给 CSS 用的渐变色条（图例上那条"低 → 高"）
+ *
+ * 和上面用的是同一组色标，所以图例和画布永远一致。
+ */
+const ELEVATION_GRADIENT_CSS = `linear-gradient(90deg, ${STOPS.map(([p, r, g, b]) => `rgb(${r},${g},${b}) ${(p * 100).toFixed(0)}%`).join(", ")})`;
+/**
+ * 生成一段**不依赖 import** 的色带源码
+ *
+ * 为什么需要这个东西？
+ * ────────────────
+ * `scripts/build-docs.mjs` 要把代码内联成单文件。
+ * 如果画布代码里写 `import { elevationColorFast } from "./elevation"`，
+ * 内联之后就断了。
+ * 所以让构建脚本直接把这张 LUT 以字面量的形式写进产物里 ——
+ * 反正它只有 256 个字符串，几 KB 而已。
+ */
+function elevationLutLiteral() {
+    return `[${ELEVATION_LUT.map((s) => JSON.stringify(s)).join(",")}]`;
+}
+
+  return { elevationColor, ELEVATION_LUT, elevationColorFast, ELEVATION_GRADIENT_CSS, elevationLutLiteral };
+})();
+const { elevationColor, ELEVATION_LUT, elevationColorFast, ELEVATION_GRADIENT_CSS, elevationLutLiteral } = __ca_elev;
+
+/* elevation 模块已内联到上面的 __ca_elev 里 */
 const A = { NORMAL:0, EMBER:1, HEAT:2, BURN:3, ASH:4, WET:5 };
-const CELL = 11, MARGIN = 1;
+const BASE_CELL = 11, MARGIN = 1, MAX_W = 760;
+
+/* ---------- 放大模式 ----------
+ * 用户的要求拆成五条：
+ *   ① 地图右下角有一个放大图标
+ *   ② 点它 → 屏幕上显示整张地图，并且从此**滚轮能改地图大小**
+ *   ③ 正常模式下滚轮**不能**改大小（避免误触把地图滚没了）
+ *   ④ 放大状态下仍然能点图点火
+ *   ⑤ 再点一次退出
+ *
+ * 实现上的关键决定：**缩放只改 cell() 的返回值，不改地图数据**。
+ * cell() 是"一格画多少像素"，是整个渲染的唯一尺寸来源。
+ * 只要它乘上 zoom，绘制、命中检测、缩放全部自动跟着走 ——
+ * 不需要在 draw() 里到处乘系数，那种改法一定会漏掉一两处，
+ * 然后出现"看着在 A 处、点下去点在 B 处"的错位。
+ */
+const ZOOM_MIN = 0.5, ZOOM_MAX = 4, ZOOM_STEP = 1.25;
+let zoomed = false;      // 是否处于放大模式（滚轮是否生效）
+let zoom = 1;            // 缩放倍率
+
+/** 是否处于放大模式（滚轮只在放大模式里改大小） */
+const isZoomMode = () => zoomed;
+
+// 格子像素 = 基础尺寸 × 缩放。放大模式下**不封顶到 BASE_CELL** ——
+// 否则地图一大就永远放不大（160 列时基础值只有 4px，乘 4 倍也只有 16px，
+// 但被 min(BASE_CELL) 卡回 11px，用户会觉得"滚了没反应"）。
+function cell() {
+  const base = Math.max(1, Math.min(BASE_CELL, Math.floor(MAX_W / grid.cols)));
+  if (!zoomed) return base;
+  return Math.max(1, Math.round(base * zoom));
+}
+const gapOf = (c) => (c >= 3 ? MARGIN : 0);
+/** 海拔换色：走 256 级查找表，几万格也不掉帧 */
+const elevColor = (h) => {
+  if (!(h > 0)) h = 0;
+  if (h > 1) h = 1;
+  return ELEVATION_LUT[(h * 255) | 0];
+};
+/** 是否处于「海拔视图」 */
+let showElevation = false;
+
+// 各级雨量的视觉参数：雨越大气越粗、落得越快、颜色越深
+const RAIN_STYLE = {
+  light:    { color: "rgba(120,168,214,0.34)", width: 0.8, length: 5,  driftX: 7,  driftY: 19 },
+  moderate: { color: "rgba(104,156,210,0.50)", width: 1,   length: 9,  driftX: 13, driftY: 33 },
+  heavy:    { color: "rgba(88,140,198,0.62)",  width: 1.3, length: 14, driftX: 19, driftY: 49 },
+  storm:    { color: "rgba(74,124,184,0.72)",  width: 1.6, length: 20, driftX: 27, driftY: 67 },
+};
 
 const cv = document.getElementById("cv");
 const ctx = cv.getContext("2d");
 
+/* 换地图的唯一入口：所有"重建地图"的地方都必须走 buildMap()，
+   否则切到真实世界地图之后一按"重置"就又变回程序地形了。 */
+function buildMap() {
+  return params.region ? M.createRealWorld(params) : M.createTerrain(params);
+}
+/** 换了地图之后，消防队/回放/计数全部作废，必须清干净 */
+function afterMapChange() {
+  crews = []; snaps = []; turn = 0; suppressed = 0; cut = 0;
+  resize(); draw(); updateStat(); updateScaleUI(); updateMapNow();
+}
+
 let params = { ...M.DEFAULT_PARAMS };
 let rescue = { ...M.DEFAULT_RESCUE, delay: 18 };
-let grid = M.createGrid(params);
+let grid = buildMap();
 let crews = [];
 let rng = M.makeRng(params.seed);
-let turn = 0, running = false, speed = 3;
+let turn = 0, running = false;
+
+/* ---------- 倍速 ----------
+ * 用户要的是「0.25x - 2.0x 的倍速设置」，所以要分清两个概念：
+ *
+ *   speedMul   —— 倍率，0.25 ~ 2.0。（用户拖的就是它）
+ *   BASE_RPS   —— 1× 对应的绝对速度，固定 3 轮/秒。
+ *
+ * 为什么必须拆开？
+ * 老版本直接把滑块的值当成"轮/秒"用（0.25~30），
+ * 于是"3"这个数字既表示倍率又表示速度，换个基准就全乱了。
+ * 拆开之后，「1×」永远等于"正常速度"，无论以后基准怎么调；
+ * 而 30 轮/秒那种速度交给独立的「快进」按钮，
+ * 不再和倍速混在同一个滑块里 —— 因为"慢动作细看"和
+ * "一步算到结果"是两种完全不同的意图，塞一个控件里必然别扭。
+ */
+const BASE_RPS = 3;
+let speedMul = 1;
+
+/** 当前实际速度（轮/秒）。tick 和标签都用它，保证显示与行为一致。 */
+function roundsPerSec() {
+  return BASE_RPS * speedMul;
+}
+
 let snaps = [], suppressed = 0, cut = 0;
 let paintMode = false, brush = "conifer", brushRadius = 1;
 let timer = null;
+// 尺寸倍率：1 = 最小 80×50
+let sizeScale = 1;
 
-/* ---------- 图例 ---------- */
+/* ---------- 状态色 / 兜底色 ----------
+ * 为什么要有这两个小东西？
+ *
+ * 【状态色】画布以前直接写 `color = "#3B3733"`，而图例读的是 M.STATE_META。
+ *   同一件事两份真相 —— 这次改配色就露馅了：改了 STATE_META，
+ *   图例变了、画布没变。所以统一走这个函数取，
+ *   传进来的 fallback 只在 STATE_META 里真找不到时用。
+ *
+ * 【兜底色】`#C9BFA8` 这个"沙土/岩石"色以前在画布里出现了三次。
+ *   现在它也改了（#C9BFA8 → #B8A275），如果继续散着写，
+ *   下一个人改配色一定漏掉一两处。收成一个常量。
+ */
+const FALLBACK_FUEL = M.FUEL_MAP["barren"].color;
+
+function stateColor(key, fallback) {
+  const m = M.STATE_META.find((s) => s.key === key);
+  return m ? m.color : fallback;
+}
+
+/* ---------- 图例 ----------
+ * 抽成函数是因为海拔视图打开时图例要整个换掉 ——
+ * 那时候画布上已经没有"针叶林/枯草"这些颜色了，
+ * 继续显示植被图例会让人以为配色坏了。
+ */
 const legendEl = document.getElementById("legend");
-M.STATE_META.forEach(s => {
-  legendEl.insertAdjacentHTML("beforeend",
-    `<span><i class="sw" style="background:${s.color}"></i>${s.label}</span>`);
-});
-legendEl.insertAdjacentHTML("beforeend",
-  `<span><i class="sw" style="background:#2E6FB8;border-radius:50%"></i>消防队</span>`);
+function buildLegend() {
+  const parts = [];
+  if (showElevation) {
+    parts.push(
+      `<span><i class="sw" style="background:${ELEVATION_GRADIENT_CSS};width:52px"></i>海拔 低 → 高</span>`
+    );
+    parts.push(`<span><i class="sw" style="background:#265684"></i>水面</span>`);
+    // 火情那一组在海拔视图下依然有效，照常显示
+    [A.BURN, A.HEAT, A.EMBER, A.ASH, A.WET].forEach((k) => {
+      const s = M.STATE_META.find((m) => m.key === k);
+      if (s) parts.push(`<span><i class="sw" style="background:${s.color}"></i>${s.label}</span>`);
+    });
+  } else {
+    M.STATE_META.forEach((s) => {
+      parts.push(`<span><i class="sw" style="background:${s.color}"></i>${s.label}</span>`);
+    });
+    // ⚠️ 这里**不要硬编码颜色**。
+    //   踩过的坑：以前写死成 `#4A87B8`，后来把水色改浓成 `#1E6FB8`，
+    //   图例却还是旧的那一格浅蓝 —— 配色明明改了，图例却骗人。
+    //   改成从模型里取，改色时图例自动跟上。
+    const wat = M.FUEL_MAP["water"];
+    parts.push(`<span><i class="sw" style="background:${wat.color}"></i>${wat.name}</span>`);
+  }
+  parts.push(`<span><i class="sw" style="background:#2E6FB8;border-radius:50%"></i>消防队</span>`);
+  legendEl.innerHTML = parts.join("");
+}
+buildLegend();
 
 /* ---------- 画布 ---------- */
 function resize() {
-  const w = grid.cols * CELL, h = grid.rows * CELL;
+  const C = cell();
+  const w = grid.cols * C, h = grid.rows * C;
   const dpr = window.devicePixelRatio || 1;
   cv.width = w * dpr; cv.height = h * dpr;
   cv.style.width = w + "px"; cv.style.height = h + "px";
@@ -1327,50 +3104,158 @@ function resize() {
 
 function draw() {
   const { cols, rows } = grid;
+  const C = cell(), gap = gapOf(C);
+  const W = cols * C, H = rows * C;
   ctx.fillStyle = "#FAF9F7";
-  ctx.fillRect(0, 0, cols * CELL, rows * CELL);
+  ctx.fillRect(0, 0, W, H);
 
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
       const i = y * cols + x;
       const f = M.FUEL_MAP[grid.fuel[i]];
       const st = grid.state[i];
+      const px = x * C, py = y * C;
       let color;
-      if (!f || f.flammability <= 0) color = "#C9BFA8";
-      else if (st === A.ASH) color = "#3B3733";
-      else if (st === A.WET) color = "#4E8FCB";
-      else if (st === A.BURN) {
-        const t = (turn + i * 7) % 3;
-        color = t === 0 ? "#F65C0A" : t === 1 ? "#FF7A2F" : "#FFB020";
+
+      /* 海拔视图：只把「没着火的地面」换成地形色，
+         火/灰烬/湿带这些事件照常显示原色 ——
+         这样才看得出"火是在爬坡还是顺沟跑"。 */
+      const isFireEvent =
+        st === A.BURN || st === A.HEAT || st === A.EMBER || st === A.ASH || st === A.WET;
+
+      if (showElevation && !isFireEvent) {
+        const h = grid.elevation ? grid.elevation[i] : undefined;
+        color = h === undefined ? (f ? f.color : FALLBACK_FUEL) : elevColor(h);
+        // 海/湖再压一层青，把水面和"低地"区分开，海岸线才看得清
+        if (f && f.flammability <= 0 && f.id === "water") {
+          ctx.fillStyle = color;
+          ctx.fillRect(px, py, C - gap, C - gap);
+          ctx.fillStyle = "rgba(38,86,132,0.62)";
+          ctx.fillRect(px, py, C - gap, C - gap);
+          continue;
+        }
       }
-      else if (st === A.HEAT) color = "#E8703A";
-      else if (st === A.EMBER) color = "#F0B429";
+      /* 状态色统一从 STATE_META 取，不再各自硬编码。
+         ⚠️ 踩过的坑：以前这里散着 #3B3733 / #4E8FCB / #E8703A …
+         图例用的是 STATE_META，画布用的是这些字面量 ——
+         同一件事有两份真相，改配色时必然漏掉一处，
+         于是"图例说这是灰烬、画布上是别的颜色"。
+         现在画布和图例读的是同一个常量，不可能再对不上。 */
+      else if (st === A.ASH) color = stateColor(A.ASH, "#38322C");
+      else if (st === A.WET) color = stateColor(A.WET, "#2FA8E8");
+      else if (st === A.BURN) {
+        // 明火的三级闪烁：底层是"燃烧"色，往上打两个更亮的橙黄。
+        // 加饱和之后底色变浓，这里必须**同一步调**跟着提亮提饱和，
+        // 否则闪烁帧会比底色暗，火焰反而变成一块块脏斑。
+        const t = (turn + i * 7) % 3;
+        color = t === 0 ? stateColor(A.BURN, "#FF4400")
+              : t === 1 ? "#FF7A2F"
+              : "#FFC24A";
+      }
+      else if (st === A.HEAT) color = stateColor(A.HEAT, "#FF7A22");
+      else if (st === A.EMBER) color = stateColor(A.EMBER, "#FFC020");
+      else if (!f || f.flammability <= 0) color = f ? f.color : FALLBACK_FUEL;
       else {
+        // 先铺植被本身的颜色，再按含水率叠一层「湿润色罩」。
+        // 关键：不是把颜色整个换成绿色 —— 针叶林的深绿、枯草的米黄都还认得出。
         color = f.color;
-        if (grid.moisture[i] > 0.5) color = "#7FBF6A";
+        const m = grid.moisture[i];
+        if (m > 0.35) {
+          const wet = Math.min(1, (m - 0.35) / 0.5);
+          ctx.fillStyle = color;
+          ctx.fillRect(px, py, C - gap, C - gap);
+          ctx.fillStyle = `rgba(96,150,196,${(wet * 0.3).toFixed(3)})`;
+          ctx.fillRect(px, py, C - gap, C - gap);
+          continue;
+        }
       }
       ctx.fillStyle = color;
-      ctx.fillRect(x * CELL, y * CELL, CELL - MARGIN, CELL - MARGIN);
+      ctx.fillRect(px, py, C - gap, C - gap);
     }
   }
 
   // 消防队
+  const crewR = Math.max(1.5, C * 0.52);
   for (const c of crews) {
-    const px = c.x * CELL + CELL / 2, py = c.y * CELL + CELL / 2;
-    if (c.delay <= 0) {
+    const px = c.x * C + C / 2, py = c.y * C + C / 2;
+    if (c.delay <= 0 && C >= 4) {
       ctx.beginPath();
-      ctx.arc(px, py, CELL * 1.5, 0, Math.PI * 2);
+      ctx.arc(px, py, C * 1.5, 0, Math.PI * 2);
       ctx.fillStyle = "rgba(78,143,203,0.13)";
       ctx.fill();
     }
     ctx.beginPath();
-    ctx.arc(px, py, CELL * 0.52, 0, Math.PI * 2);
+    ctx.arc(px, py, crewR, 0, Math.PI * 2);
     ctx.fillStyle = c.delay > 0 ? "#8FAECC" : "#2E6FB8";
     ctx.fill();
-    ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2; ctx.stroke();
-    if (c.delay > 0) {
-      ctx.strokeStyle = "#2E6FB8"; ctx.lineWidth = 1;
-      ctx.strokeRect(px - CELL * 0.75, py - CELL * 0.75, CELL * 1.5, CELL * 1.5);
+    if (C >= 4) {
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2; ctx.stroke();
+      if (c.delay > 0) {
+        ctx.strokeStyle = "#2E6FB8"; ctx.lineWidth = 1;
+        ctx.strokeRect(px - C * 0.75, py - C * 0.75, C * 1.5, C * 1.5);
+      }
+    }
+  }
+
+  /* ---------- 天气层 ----------
+   * 天气是「叠加在地图上的」，不是「把地图涂掉」。
+   * 雨丝不再依赖 running —— 之前暂停就看不见雨，用户以为雨停了。 */
+  const rain = M.RAIN_MAP[params.rain];
+  if (rain && rain.density > 0) {
+    const slant = 2 + (params.windPower ?? 0.4) * 4;
+
+    // 1) 雨中含水汽，越大雨越朦胧
+    const hazeMap = { moderate: 0.05, heavy: 0.08, storm: 0.11 };
+    if (hazeMap[rain.id]) {
+      ctx.fillStyle = `rgba(196,214,232,${hazeMap[rain.id]})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    // 2) 雨丝
+    const S = RAIN_STYLE[rain.id] || RAIN_STYLE.light;
+    ctx.strokeStyle = S.color;
+    ctx.lineWidth = S.width;
+    ctx.beginPath();
+    for (let k = 0; k < rain.density; k++) {
+      const rx = ((k * 97 + turn * S.driftX) % W) + 0.5;
+      const ry = (k * 53 + turn * S.driftY) % H;
+      ctx.moveTo(rx, ry);
+      ctx.lineTo(rx - slant, ry + S.length);
+    }
+    ctx.stroke();
+
+    // 3) 大雨以上：地上溅起水花
+    if (rain.id === "heavy" || rain.id === "storm") {
+      const splashes = rain.id === "storm" ? 120 : 60;
+      ctx.fillStyle = "rgba(168,205,236,0.55)";
+      for (let k = 0; k < splashes; k++) {
+        if ((turn + k) % 3 !== 0) continue;
+        ctx.fillRect((k * 173 + turn * 29) % W, (k * 311 + turn * 17) % H, 1.6, 1.6);
+      }
+    }
+
+    // 4) 暴雨：压暗 + 偶发闪电
+    if (rain.id === "storm") {
+      ctx.fillStyle = "rgba(38,56,88,0.16)";
+      ctx.fillRect(0, 0, W, H);
+      const phase = (turn * 7) % 11;
+      if (phase === 0 || phase === 1) {
+        ctx.fillStyle = phase === 0 ? "rgba(255,255,240,0.22)" : "rgba(255,255,240,0.12)";
+        ctx.fillRect(0, 0, W, H);
+        const lx = ((turn * 137) % Math.max(1, W - 60)) + 30;
+        ctx.strokeStyle = "rgba(255,255,235,0.9)";
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.moveTo(lx, 0);
+        ctx.lineTo(lx - 10, H * 0.35);
+        ctx.lineTo(lx + 8, H * 0.5);
+        ctx.lineTo(lx - 6, H * 0.78);
+        ctx.lineTo(lx + 2, H);
+        ctx.stroke();
+      }
+    } else if (rain.id === "heavy") {
+      ctx.fillStyle = "rgba(38,56,88,0.07)";
+      ctx.fillRect(0, 0, W, H);
     }
   }
 }
@@ -1380,9 +3265,9 @@ function updateStat() {
   const s = M.countStates(grid, turn);
   const flam = M.countFlammable(grid) || 1;
   document.getElementById("stat").innerHTML =
-    `第 <b>${turn}</b> 轮 · 燃烧 <b style="color:#F65C0A">${s.burning}</b> 格 · ` +
+    `第 <b>${turn}</b> 轮 · 燃烧 <b style="color:${stateColor(A.BURN, "#FF4400")}">${s.burning}</b> 格 · ` +
     `灰烬 <b>${s.ash}</b> 格 · 烧毁率 <b>${(s.ash / flam * 100).toFixed(1)}%</b> · ` +
-    `湿隔离带 <b style="color:#4E8FCB">${s.wetline}</b> 格 · ` +
+    `湿隔离带 <b style="color:${stateColor(A.WET, "#2FA8E8")}">${s.wetline}</b> 格 · ` +
     (rescue.crews > 0 ? `已扑救 <b style="color:#2E6FB8">${suppressed}</b> 格` : `<b>无消防队</b>`);
 }
 
@@ -1413,18 +3298,96 @@ function setRun(v) {
 }
 function tick() {
   if (!running) return;
-  const ms = Math.min(4000, Math.max(40, 1000 / speed));
+  const ms = Math.min(4000, Math.max(40, 1000 / roundsPerSec()));
   timer = setTimeout(() => { oneStep(); tick(); }, ms);
 }
 
 /* ---------- 交互 ---------- */
+/**
+ * 屏幕坐标 → 格子坐标
+ *
+ * 为什么直接减 getBoundingClientRect() 就够了，不用管滚动和缩放？
+ * 因为 rect 是**视口坐标**，已经包含了滚动偏移；
+ * 而 C = cell() 已经包含了缩放倍率。
+ * 两个因子各自在自己的层面被消化掉了，这里不需要额外补偿 ——
+ * 这也是为什么把缩放做成"只改 cell()"能一次到位：
+ * 命中检测自动跟着缩放走，不会出现"看着在 A、点下去在 B"。
+ */
 function cellFromEvent(e) {
   const r = cv.getBoundingClientRect();
+  const C = cell();
   return {
-    x: Math.floor((e.clientX - r.left) / CELL),
-    y: Math.floor((e.clientY - r.top) / CELL),
+    x: Math.floor((e.clientX - r.left) / C),
+    y: Math.floor((e.clientY - r.top) / C),
   };
 }
+
+/* ---------- 放大模式的开关与滚轮 ----------
+ *
+ * 用户明确要求"正常模式下滚轮控制不了地图大小"，
+ * 所以这里**不能在 document 上无条件监听 wheel** ——
+ * 那会连页面正常滚动都一起吃掉（用户想滚到下面看图表就滚不动了），
+ * 是非常讨厌的体验。
+ *
+ * 正确做法是两级判断：
+ *   ① 只有指针在画布区域内才处理
+ *   ② 只有放大模式才改缩放；不在放大模式就**什么都不做**
+ *      （连 preventDefault 都不调，让浏览器照常滚页面）
+ */
+const wrapEl = document.getElementById("cvwrap");
+const zoomBtn = document.getElementById("zoomb");
+const zoomHint = document.getElementById("zoomHint");
+
+function setZoomMode(on) {
+  zoomed = on;
+  wrapEl.classList.toggle("zoomed", on);
+  zoomBtn.classList.toggle("on", on);
+  zoomBtn.textContent = on ? "⤡" : "⤢";
+  zoomBtn.title = on ? "退出放大模式" : "放大查看整张地图（滚轮可缩放）";
+  zoomHint.hidden = !on;
+  if (!on) zoom = 1;      // 退出时复位，免得下次进来还是上次的倍数
+  resize(); draw();
+}
+
+zoomBtn.onclick = (e) => {
+  e.stopPropagation();    // 别让点击穿到画布上去点火
+  setZoomMode(!zoomed);
+  showToast(zoomed
+    ? "已进入放大模式 —— 滚轮缩放，在图上点一下照样能点火"
+    : "已退出放大模式");
+};
+
+/* 滚轮缩放。注意 passive: false —— 否则 preventDefault 无效，
+   一缩放页面就跟着一起滚，手感很差。 */
+cv.addEventListener("wheel", (e) => {
+  // ① 不在放大模式：完全不处理，页面照常滚动
+  if (!isZoomMode()) return;
+
+  // ② 在放大模式：吃掉这次滚动事件，改缩放
+  e.preventDefault();
+
+  const before = zoom;
+  const next = e.deltaY < 0 ? zoom * ZOOM_STEP : zoom / ZOOM_STEP;
+  zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, next));
+  if (zoom === before) return;   // 已经到边界，别白重绘
+
+  /* 缩放时"以光标下的格子为锚点"。
+     不做这件事的话，放大后画面会往左上角跑 ——
+     用户盯着的地方反而跑出视口，得反复滚动去找，很难用。
+     做法：记录光标相对画布的可滚动坐标，缩放后按同样的**比例位置**滚回去。 */
+  const r = cv.getBoundingClientRect();
+  const cx = e.clientX - r.left;                   // 光标在画布内的位置
+  const cy = e.clientY - r.top;
+  const ratioX = (wrapEl.scrollLeft + cx) / (r.width || 1);
+  const ratioY = (wrapEl.scrollTop + cy) / (r.height || 1);
+
+  resize(); draw();
+
+  const r2 = cv.getBoundingClientRect();
+  wrapEl.scrollLeft = ratioX * r2.width - (e.clientX - r2.left);
+  wrapEl.scrollTop = ratioY * r2.height - (e.clientY - r2.top);
+}, { passive: false });
+
 let dragging = false;
 
 cv.addEventListener("mousedown", e => {
@@ -1445,45 +3408,167 @@ cv.addEventListener("mousemove", e => {
 });
 window.addEventListener("mouseup", () => { dragging = false; });
 
-document.getElementById("play").onclick = () => {
-  if (snaps.length === 0) {
-    for (let k = 0; k < 2; k++) {
-      grid = M.igniteAt(grid, Math.floor(rng() * grid.cols), Math.floor(rng() * grid.rows), M.IGNITION_CAUSES[0]);
-    }
-    crews = M.createCrews(rescue, grid);
+/** 判断地图上还有没有"活着"的火 */
+function hasLiveFire() {
+  for (let i = 0; i < grid.state.length; i++) {
+    const s = grid.state[i];
+    if (s === A.EMBER || s === A.HEAT || s === A.BURN) return true;
   }
-  setRun(!running);
+  return false;
+}
+
+/* ---------- 开始 / 暂停 ----------
+ *
+ * 语义已改：开始**只启动演化，绝不替你点火**。
+ * 点火完全交给人 —— 在地图上点哪里，哪里起火；
+ * 或按「随机点火」随机点两处。
+ * 这样"火从哪起"始终由你决定，实验才说得清是"谁造成了什么"。
+ */
+document.getElementById("play").onclick = () => {
+  if (running) { setRun(false); return; }
+  if (!hasLiveFire()) {
+    showToast("还没有火 —— 在地图上点一下点火，或按「随机点火」");
+    return;
+  }
+  setRun(true);
 };
 document.getElementById("step").onclick = () => { setRun(false); oneStep(); };
+
+/* ---------- 随机点火：固定两处，且一定点在可燃的地上 ----------
+ *
+ * 为什么不用「随机抽两个坐标」？
+ * 亚欧大陆那张图有一多半是海，随手抽两个坐标很可能全落在水里，
+ * 于是看起来像是什么都没发生、以为按钮坏了。
+ * M.igniteRandom 只在可燃的陆地格里抽样，保证一次真的点着两处。
+ */
 document.getElementById("ignite").onclick = () => {
   setRun(false);
-  for (let k = 0; k < 3; k++) {
-    grid = M.igniteAt(grid, Math.floor(rng() * grid.cols), Math.floor(rng() * grid.rows), M.IGNITION_CAUSES[0]);
+  const before = grid.state.slice();
+  grid = M.igniteRandom(grid, 2, M.IGNITION_CAUSES[0], rng);
+  let lit = 0;
+  for (let i = 0; i < grid.state.length; i++) {
+    if (before[i] === A.NORMAL && grid.state[i] !== before[i]) lit++;
+  }
+  if (lit === 0) {
+    showToast("这片地已经没得可烧了 —— 换一张地图，或先按「重置」");
+    return;
   }
   if (crews.length === 0) crews = M.createCrews(rescue, grid);
+  if (snaps.length === 0) snaps.push(M.countStates(grid, 0));
   draw(); updateStat();
+  showToast(`🎲 随机点燃了 2 处`);
 };
+
+/* ---------- 海拔视图 ---------- */
+document.getElementById("elev").onclick = () => {
+  const g = grid.elevation;
+  if (!g) {
+    showToast("这张图没有高程数据（比如自己画的图），海拔视图用不了");
+    return;
+  }
+  showElevation = !showElevation;
+  const b = document.getElementById("elev");
+  b.classList.toggle("primary", showElevation);
+  b.textContent = showElevation ? "🏔 海拔视图 · 开" : "🏔 海拔视图";
+  buildLegend();
+  draw();
+  showToast(
+    showElevation
+      ? "已切到海拔视图 —— 越亮越高。火/灰烬/湿带仍是原色，方便看火和地形的关系"
+      : "已切回植被视图"
+  );
+};
+
 document.getElementById("reset").onclick = () => {
   setRun(false);
   rng = M.makeRng(params.seed);
-  grid = M.createGrid(params);
-  crews = []; snaps = []; turn = 0; suppressed = 0; cut = 0;
-  draw(); updateStat();
+  grid = buildMap();
+  afterMapChange();
 };
 
-/* 速度 */
+/* 倍速 */
 const spd = document.getElementById("spd");
-spd.oninput = () => {
-  speed = Number(spd.value);
+function applySpeed() {
+  speedMul = Number(spd.value);
+  const rps = roundsPerSec();
   document.getElementById("spdLabel").textContent =
-    speed < 1 ? `${Math.round(speed * 1000)} 毫秒/轮` : `${speed} 轮/秒`;
-};
+    `${speedMul}× · ${rps % 1 === 0 ? rps : rps.toFixed(2)} 轮/秒`;
+  // 运行中改速度要立刻生效：重排一次定时器，
+  // 否则要等当前这一拍走完才用上新速度，手感上像"卡了一下"。
+  if (running) { if (timer) { clearTimeout(timer); timer = null; } tick(); }
+}
+spd.oninput = applySpeed;
 document.getElementById("spdChips").innerHTML =
-  [[0.5, "0.5×超慢"], [1, "1×"], [3, "3×"], [8, "8×"], [20, "20×"]]
+  [[0.25, "0.25×最慢"], [0.5, "0.5×"], [1, "1×正常"], [1.5, "1.5×"], [2, "2×最快"]]
     .map(([v, l]) => `<div class="chip" data-v="${v}">${l}</div>`).join("");
 document.querySelectorAll("#spdChips .chip").forEach(c => {
-  c.onclick = () => { spd.value = c.dataset.v; spd.oninput(); };
+  c.onclick = () => { spd.value = c.dataset.v; applySpeed(); };
 });
+
+/* ---------- 快进 ----------
+ * 一次性把接下来 N 轮算完，不经过定时器 ——
+ * 所以它不是"更快地播放"，而是"跳过播放、直接给结果"。
+ *
+ * 两个关键实现细节：
+ *
+ * ① 循环体必须和 oneStep() **完全同构**。
+ *    第一版我图省事自己拼了一版调用，结果把 stepGrid 的
+ *    参数顺序写错了（它是 `(grid, params, turn, rng)`，四参无 crews，
+ *    我多传了一个 crews，于是 turn 收到数组、rng 收到数字）。
+ *    这种错误在"跑起来看着好像也没崩"的掩护下特别隐蔽，
+ *    而且会让快进出来的结果和逐轮跑出来的**对不上** ——
+ *    实验数据一旦不可复现，整个沙盒的意义就没了。
+ *    所以这里逐行对照 oneStep 来写，宁可重复也不要"聪明"。
+ *
+ * ② 只在最后 draw 一次。
+ *    中间 200 轮的画面没人看得见，画了纯属浪费；
+ *    一帧一帧画会让"快进"变成"更慢的播放"。
+ */
+const FASTFORWARD_ROUNDS = 200;
+document.getElementById("fast").onclick = () => {
+  /* 先确认有火。
+     一片没火的林子快进一万轮也不会有任何变化，
+     直接提示比默默空转好。 */
+  const st = grid.state;
+  let live = false;
+  for (let i = 0; i < st.length; i++) {
+    if (st[i] === A.EMBER || st[i] === A.HEAT || st[i] === A.BURN) { live = true; break; }
+  }
+  if (!live) { showToast("还没有火 —— 先在地图上点一下，或按「随机点火」"); return; }
+
+  setRun(false);
+  const t0 = performance.now();
+  let done = 0;
+  for (let k = 0; k < FASTFORWARD_ROUNDS; k++) {
+    const fire = M.stepGrid(grid, params, turn, rng);
+    const resc = M.stepCrews(
+      fire.grid,
+      crews.length > 0 ? crews : M.createCrews(rescue, fire.grid),
+      rescue, rng
+    );
+    crews = resc.crews;
+    suppressed += resc.suppressed;
+    cut += resc.cut;
+    grid = resc.grid;
+    snaps.push(M.countStates(grid, turn));
+    turn++;
+    done++;
+    /* 火烧完了就提前收工。
+       没必要为了凑够 200 轮而空转 —— 那样只会让用户以为"快进很慢"。 */
+    const s = M.countStates(grid, turn);
+    if (s.burning === 0 && s.ember === 0 && s.heating === 0) break;
+  }
+  const ms = Math.round(performance.now() - t0);
+
+  draw(); updateStat();
+  const s = M.countStates(grid, turn);
+  const spent = s.burning === 0 && s.ember === 0 && s.heating === 0;
+  showToast(
+    spent
+      ? `⏩ 火已熄灭（推进 ${done} 轮，用时 ${ms} ms）`
+      : `⏩ 快进 ${done} 轮（用时 ${ms} ms）`
+  );
+};
 
 /* 消防队 */
 const crewsEl = document.getElementById("crews");
@@ -1496,6 +3581,8 @@ crewsEl.oninput = () => {
   else crews = [];
   draw(); updateStat();
 };
+/* 默认 0 支（对照组）。点按钮在 0 ⇄ 2 之间切换，
+   所以判断依据是"当前是否有队"，而不是"当前是不是 2"。 */
 document.getElementById("rescueToggle").onclick = () => {
   crewsEl.value = rescue.crews === 0 ? 2 : 0;
   crewsEl.oninput();
@@ -1536,24 +3623,203 @@ document.getElementById("brush").oninput = (e) => {
   document.getElementById("brushLabel").textContent =
     brushRadius === 0 ? "单格" : `${brushRadius * 2 + 1} 格宽`;
 };
+
+/* ---------- 地图尺寸 ----------
+ * 精度提上来之后，尺寸不再"长宽同比例放大"——
+ * 默认已经是 160×90（14,400 格），再等比放到 4× 就是 640×360，
+ * 画布上每格连 1 像素都分不到，看图变成看噪点。
+ * 改成「高度基本不动，横向往外看」：视野更宽，
+ * 但每格的物理尺寸和画面颗粒度都保持稳定。
+ * 每项是 [宽倍率, 高倍率]，首档必须和 M.DEFAULT_PARAMS 对上。
+ */
+const MIN_COLS = 160, MIN_ROWS = 90;
+const SIZE_STEPS = [[1,1],[1.25,1],[1.6,1.1],[2,1.2],[2.5,1.3],[3,1.5],[4,1.7]];
+
+/** 比例尺是固定的：1 格永远是 10 米，所以拉大尺寸 = 往外多看一圈地 */
+function updateScaleUI() {
+  const wM = grid.cols * 10, hM = grid.rows * 10;
+  const km2 = (wM * hM) / 1e6;
+  const fmt = (v) => (v >= 1000 ? (v / 1000).toFixed(2) + " km" : v + " m");
+  document.getElementById("sizeLabel").textContent = `${grid.cols} × ${grid.rows} 格`;
+  document.getElementById("cellCount").textContent = (grid.cols * grid.rows).toLocaleString();
+  document.getElementById("realRange").textContent = `${fmt(wM)} × ${fmt(hM)}`;
+  document.getElementById("scaleSize").textContent = `${fmt(wM)} × ${fmt(hM)}`;
+  document.getElementById("scaleArea").textContent =
+    `${((wM * hM) / 10000).toFixed(1)} 公顷（${km2.toFixed(2)} km²）`;
+  document.getElementById("scaleBall").textContent =
+    `${((wM * hM) / (105 * 68)).toFixed(0)} 个`;
+  document.getElementById("scaleNote").textContent =
+    km2 >= 6
+      ? `比例尺固定：1 格 = 10 米。当前 ${km2.toFixed(1)} km²，已经接近一场真实山火的量级。`
+      : `比例尺固定：1 格 = 10 米。拉大尺寸不是「把格子拉大」，而是「往外多看一圈地」——` +
+        `面积随尺寸增长，单格代表的实际大小不变。真实山火动辄上万亩（>6 km²），把尺寸拉大就能对上这个量级。`;
+}
+
+/* ============================================================
+ * 地图操作子页面
+ * ============================================================ */
+
+const mask = document.getElementById("mapMask");
+document.getElementById("openMap").onclick = () => mask.classList.add("on");
+document.getElementById("mapClose").onclick = () => mask.classList.remove("on");
+mask.onclick = (e) => { if (e.target === mask) mask.classList.remove("on"); };
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") mask.classList.remove("on");
+});
+
+/* 四个分区切换 */
+document.querySelectorAll("#mapTabs button").forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll("#mapTabs button").forEach((x) => x.classList.remove("on"));
+    b.classList.add("on");
+    document.querySelectorAll(".mapPane").forEach((p) => {
+      p.hidden = p.dataset.pane !== b.dataset.tab;
+    });
+  };
+});
+
+/* 真实世界区域列表 */
+function renderRegions() {
+  const list = document.getElementById("regionList");
+  list.innerHTML = "";
+  M.REGIONS.forEach((r) => {
+    const [w, s, e, n] = r.bbox;
+    const midLat = ((s + n) / 2) * Math.PI / 180;
+    const realW = Math.round((e - w) * 111 * Math.cos(midLat));
+    const realH = Math.round((n - s) * 111);
+    const on = params.region === r.id;
+    const b = document.createElement("button");
+    b.className = "region" + (on ? " on" : "");
+    // 真实地图至少给到默认精度。以前这里写死 144×90，
+    // 是因为当时的默认才 80×50；现在默认已经是 160×90，
+    // 所以取两者的较大值，别把已经更细的图反而降下来。
+    const gc = Math.max(grid.cols, MIN_COLS);
+    const gr = Math.max(grid.rows, MIN_ROWS);
+    b.innerHTML =
+      `<span><b>${r.name}</b>${on ? '<i class="tagOn">当前</i>' : ""}` +
+      `<span class="d">${r.desc}</span>` +
+      `<span class="g">经度 ${w}° ~ ${e}° · 纬度 ${s}° ~ ${n}° · 实地约 ${realW} × ${realH} km` +
+      `（默认网格 ${gc}×${gr}，1 格 ≈ ${(realW / gc).toFixed(0)} km）</span></span>` +
+      `<span class="go">${on ? "重新载入" : "载入 ›"}</span>`;
+    b.onclick = () => {
+      setRun(false);
+      params.region = r.id;
+      if (params.cols < MIN_COLS) params.cols = MIN_COLS;
+      if (params.rows < MIN_ROWS) params.rows = MIN_ROWS;
+      rng = M.makeRng(params.seed);
+      grid = M.createRealWorld(params);
+      afterMapChange();
+      renderRegions();
+      mask.classList.remove("on");
+    };
+    list.appendChild(b);
+  });
+}
+renderRegions();
+
+/* 顶部卡片上的"当前是什么地图" */
+function updateMapNow() {
+  const el = document.getElementById("mapNow");
+  const region = params.region ? M.REGION_MAP[params.region] : null;
+  // 程序地形时直接报品种名，让人一眼看出"这次随出来的是什么脾气的地方"
+  const label = region
+    ? region.name
+    : grid.flavor
+      ? `随机器貌 · ${grid.flavor.name}`
+      : "程序生成地貌";
+  el.textContent = `当前：${label} · ${grid.cols}×${grid.rows} 格`;
+}
+
+/* 当前锁定的地貌品种。null = 不指定，由种子自己决定 */
+let flavorId = null;
+
+document.getElementById("size").oninput = (e) => {
+  setRun(false);
+  const st = SIZE_STEPS[Number(e.target.value)] || SIZE_STEPS[0];
+  sizeScale = st[0];
+  params.cols = Math.round((MIN_COLS * st[0]) / 2) * 2;
+  params.rows = Math.round((MIN_ROWS * st[1]) / 2) * 2;
+  rng = M.makeRng(params.seed);
+  grid = buildMap();
+  afterMapChange();
+  showToast(`地图已调整为 ${params.cols}×${params.rows} 格（共 ${(params.cols * params.rows).toLocaleString()} 格）`);
+};
+
+/* 随机换一片：换种子 + 换品种 —— 这是"不要每次都长一样"的关键 */
+document.getElementById("randTerrain").onclick = () => {
+  setRun(false);
+  params.region = "";
+  params.seed = M.nextSeed(params.seed);
+  // 品种也重新掷一次：和上一次不同才算"换了地方"
+  const pool = M.TERRAIN_FLAVORS.filter(f => f.id !== flavorId);
+  flavorId = pool[Math.floor(Math.random() * pool.length)].id;
+  rng = M.makeRng(params.seed);
+  grid = M.createTerrain(params, flavorId);
+  afterMapChange();
+  renderFlavors();
+  mask.classList.remove("on");
+  showToast(`🎲 ${grid.flavor.name} —— ${grid.flavor.desc}`);
+};
+
+/* 重新生成同品种：只换地形，不换脾气 */
+document.getElementById("realTerrain").onclick = () => {
+  setRun(false);
+  params.region = "";
+  params.seed = M.nextSeed(params.seed);
+  rng = M.makeRng(params.seed);
+  // flavorId 为 null 时让它自己按新种子挑
+  grid = M.createTerrain(params, flavorId ?? undefined);
+  afterMapChange();
+  renderFlavors();
+  mask.classList.remove("on");
+  showToast(`🏔 已重新生成：${grid.flavor.name}`);
+};
+
 document.getElementById("fillGrass").onclick = () => {
   setRun(false); rng = M.makeRng(params.seed);
   grid = M.createBlankGrid(params, "drygrass");
-  crews = []; snaps = []; turn = 0; suppressed = 0; cut = 0;
-  draw(); updateStat();
+  flavorId = null;
+  afterMapChange();
+  renderFlavors();
+  mask.classList.remove("on");
 };
-document.getElementById("randTerrain").onclick = () => {
-  setRun(false); rng = M.makeRng(params.seed);
-  grid = M.createGrid(params);
-  crews = []; snaps = []; turn = 0; suppressed = 0; cut = 0;
-  draw(); updateStat();
-};
+
+/* 地貌品种列表：点一下就换成那个品种 */
+function renderFlavors() {
+  const box = document.getElementById("flavorGrid");
+  const cur = grid.flavor?.id ?? null;
+  box.innerHTML = "";
+  M.TERRAIN_FLAVORS.forEach((f) => {
+    const b = document.createElement("button");
+    const on = cur === f.id;
+    b.className = "flav" + (on ? " on" : "");
+    b.innerHTML = `<b>${f.name}${on ? '<i class="tagOn">当前</i>' : ""}</b>` +
+                  `<span class="fd">${f.desc}</span>`;
+    b.onclick = () => {
+      setRun(false);
+      params.region = "";
+      flavorId = f.id;
+      params.seed = M.nextSeed(params.seed);
+      rng = M.makeRng(params.seed);
+      grid = M.createTerrain(params, flavorId);
+      afterMapChange();
+      renderFlavors();
+      showToast(`${f.name} —— ${f.desc}`);
+    };
+    box.appendChild(b);
+  });
+  const d = document.getElementById("realDesc");
+  if (d) d.textContent = flavorId
+    ? `沿用「${M.FLAVOR_MAP[flavorId].name}」品种，只换一套地形`
+    : "沿用当前品种，只换一套地形";
+}
 document.getElementById("clearFire").onclick = () => {
   setRun(false);
   grid = { ...grid, state: new Uint8Array(grid.state.length), age: new Uint8Array(grid.age.length) };
   crews = []; snaps = []; turn = 0; suppressed = 0; cut = 0;
   draw(); updateStat();
 };
+
 /* 地图存档：把植被/湿度/火情打包成 json 下载 */
 document.getElementById("saveMap").onclick = () => {
   const data = {
@@ -1628,9 +3894,26 @@ document.querySelectorAll("#rainChips .chip").forEach(c => {
 });
 document.querySelector('#rainChips .chip[data-id="none"]').classList.add("on");
 
+/* 轻量提示条：告诉用户"这次随出来的是什么地方" */
+let toastTimer = null;
+function showToast(msg) {
+  let el = document.getElementById("toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "toast";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add("on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("on"), 2600);
+}
+
 /* 启动 */
-resize(); draw(); updateStat();
-document.getElementById("spdLabel").textContent = "3 轮/秒";
+renderFlavors();
+resize(); draw(); updateStat(); updateScaleUI(); updateMapNow();
+applySpeed();  // 让倍速标签与滑块初值对齐（1× · 3 轮/秒）
+crewsEl.oninput();  // 让"消防队"滑块/文案与 DEFAULT_RESCUE.crews = 0 对齐
 </script>
 </body>
 </html>

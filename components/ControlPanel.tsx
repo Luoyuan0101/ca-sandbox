@@ -14,6 +14,15 @@ interface Props {
   setSeed: (v: number) => void;
 }
 
+/** 每级雨在地图上长什么样 —— 写清楚，用户才知道该挑哪一档 */
+const RAIN_DESC: Record<string, string> = {
+  none: "无雨。火按自己的节奏烧。",
+  light: "小雨：地图上几缕细雨丝，地面慢慢回潮。",
+  moderate: "中雨：雨丝变密变长，地图蒙一层薄雾，火明显蔫了。",
+  heavy: "大雨：雨丝连成线，地上溅起水花，整张图微微发暗。",
+  storm: "暴雨：几乎是雨墙，还带闪电 —— 火基本压死了，但雨停后仍要防复燃。",
+};
+
 function Section({
   title,
   hint,
@@ -130,6 +139,9 @@ export default function ControlPanel({
             </button>
           ))}
         </div>
+        <p className="mt-2 text-[10.5px] leading-4 text-ash-400">
+          {RAIN_DESC[params.rain] ?? RAIN_DESC.none}
+        </p>
       </Section>
 
       {/* 着火原因 */}
@@ -331,7 +343,7 @@ export default function ControlPanel({
       {/* 植被构成 */}
       <Section title="植被构成" hint={`归一化前合计 ${mixTotal}`}>
         <div className="space-y-2.5">
-          {FUELS.map((f) => (
+          {FUELS.filter((f) => f.id !== "water").map((f) => (
             <Slider
               key={f.id}
               label={f.name}
@@ -344,6 +356,10 @@ export default function ControlPanel({
             />
           ))}
         </div>
+        <p className="mt-2.5 border-t border-ash-100 pt-2 text-[10.5px] leading-4 text-ash-400">
+          「随机地形」按钮按这个比例生成。河流/湖泊不参与配比 ——
+          它由「生成真实地貌」按地形自己算出来。
+        </p>
       </Section>
 
       {/* 种子 */}
