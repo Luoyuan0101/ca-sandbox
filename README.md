@@ -7,6 +7,17 @@
 
 ---
 
+## 🔥 在线演示
+
+**https://luoyuan0101.github.io/ca-sandbox/**
+
+点开即玩，不用安装任何东西。
+
+> 如果打不开或页面空白：GitHub Pages 首次部署需要 1–2 分钟。
+> 到仓库的 **Actions** 标签页看部署进度，跑完了再刷新。
+
+---
+
 ## 这是什么
 
 一个 80 × 50 的格子世界。每个格子只知道两件事：**自己是什么**、**邻居在干什么**。
@@ -63,6 +74,17 @@ PPT 里的火势演化曲线是**原生可编辑图表**，双击就能改数据
 
 ## 跑起来
 
+### 方式一：在线演示（最快）
+
+直接打开 **https://luoyuan0101.github.io/ca-sandbox/** —— 不用装任何东西。
+
+### 方式二：本地单文件（不用装依赖）
+
+`docs/index.html` 是一个**完全自包含**的单文件（模型代码已内联），
+双击就能在浏览器里跑，功能与正式版一致。
+
+### 方式三：完整 Next.js 项目
+
 ```bash
 npm install
 npm run dev
@@ -70,14 +92,7 @@ npm run dev
 
 打开 http://localhost:3000
 
-### 不想装依赖？
-
-`preview/` 里有一份**零构建**的单文件版本，直接用浏览器打开就行：
-
-```bash
-cd preview
-node serve.mjs      # 然后访问 http://127.0.0.1:3300
-```
+> 首次 `npm install` 需要联网下载依赖，命令行窗口别关。
 
 功能跟正式版一致（画布、速度、消防队、地形编辑器、环境参数全套）。
 
@@ -114,11 +129,38 @@ ca-sandbox/
 │  └─ StatsChart.tsx      手绘 SVG 折线图
 ├─ app/
 │  └─ fire/page.tsx       火灾沙盒主页面
-└─ preview/               零构建演示版
+├─ docs/
+│  └─ index.html          ★ 单文件演示版（GitHub Pages 部署的这个）
+├─ preview/               开发用的零构建版（依赖外部 fireModel.js）
+├─ plan.md                项目评审（课程任务 3）
+└─ .github/workflows/
+   └─ pages.yml           自动部署到 GitHub Pages
 ```
 
 想改物理效果 → 只动 `lib/fireModel.ts`。
 想改界面 → 动 `components/`。
+
+> ⚠️ `docs/index.html` 是**把模型内联进来**的单文件版本。
+> 改了 `lib/fireModel.ts` 后，要重新生成它才能在在线演示里生效 —— 见下方说明。
+
+---
+
+## 更新在线演示
+
+`docs/index.html` 里内联的是编译后的模型代码。改了模型之后：
+
+```bash
+# 1. 编译模型
+npx tsc lib/fireModel.ts --outDir ./preview --module esnext --target es2020 --moduleResolution bundler --skipLibCheck
+
+# 2. 把 preview/index.html 里的 import 换成内联（见 CONTRIBUTING 或问 AI）
+# 3. 复制到 docs/
+cp preview/index.html docs/index.html
+```
+
+> 为什么要内联？因为 GitHub Pages 上加载外部 ES 模块时，
+> 某些情况下（尤其是从 GitHub 网页直接预览 `blob` 链接）模块请求会被拦，
+> 脚本整段不执行 → 画布黑屏。内联成单文件后彻底免疫这个问题。
 
 ---
 

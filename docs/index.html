@@ -1,0 +1,1636 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>火灾蔓延沙盒 · 独立预览</title>
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --ink: #2B2824; --ink2: #5C554D; --ink3: #918A81;
+    --line: #E5E1DA; --bg: #FAF9F7; --card: #FFFFFF;
+    --ember: #F65C0A; --blue: #2E6FB8; --water: #4E8FCB;
+  }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 28px 24px 60px; }
+  h1 { font-size: 23px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--ink3); font-size: 13px; margin-bottom: 20px; }
+  .grid { display: grid; gap: 28px; grid-template-columns: minmax(0,1fr) 372px; }
+  @media (max-width: 1080px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+  .card + .card { margin-top: 16px; }
+  canvas { border: 1px solid var(--line); border-radius: 12px; display: block; max-width: 100%; cursor: crosshair; }
+  .tips { background: #FFF7ED; border: 1px solid #FDDCAB; color: #92400E;
+          border-radius: 10px; padding: 10px 12px; font-size: 12px; line-height: 1.7; }
+  .tips.blue { background: #EFF6FF; border-color: #BFDBFE; color: #1E40AF; }
+  .scale { margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: #fff; }
+  .scale-hd { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .scale-hd span { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+  .scale-hd i { font-style: normal; font-size: 10.5px; color: #918A81; }
+  .scale-row { display: flex; justify-content: space-between; font-size: 11.5px; color: #5C554D; line-height: 1.9; }
+  .scale-row b { font-weight: 600; color: #2B2824; }
+  .scale-note { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid #F1EEE9;
+                font-size: 10.5px; line-height: 1.6; color: #918A81; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 12px; font-size: 12px; color: var(--ink2); }
+  .legend span { display: flex; align-items: center; gap: 5px; }
+  .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button {
+    font: inherit; font-size: 13px; padding: 7px 13px; border-radius: 9px;
+    border: 1px solid var(--line); background: #fff; color: var(--ink2);
+    cursor: pointer; transition: .15s;
+  }
+  button:hover { background: #F5F3F0; }
+  button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  button.primary:hover { background: #403B35; }
+  .stat { display: flex; gap: 18px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink2); margin-top: 12px; }
+  .stat b { color: var(--ink); font-weight: 600; }
+  label.f { display: block; margin-bottom: 14px; }
+  label.f > span { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--ink2); margin-bottom: 5px; }
+  label.f b { color: var(--ink); }
+  input[type=range] { width: 100%; accent-color: var(--ember); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip { font-size: 11.5px; padding: 4px 9px; border-radius: 7px; border: 1px solid var(--line); background: #fff; color: var(--ink3); cursor: pointer; }
+  .chip.on { border-color: #F8B78A; background: #FFF3EA; color: #B14A0C; }
+  .sec { font-size: 12px; font-weight: 600; color: var(--ink2); margin: 16px 0 8px; letter-spacing: .3px; }
+  .findings { font-size: 12.5px; line-height: 1.85; color: var(--ink2); }
+  .findings b { color: var(--ink); }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+  td { padding: 4px 6px; border-bottom: 1px solid #F1EEE9; }
+  td:last-child { text-align: right; font-weight: 600; color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>火灾蔓延沙盒</h1>
+  <div class="sub">多阶段燃烧元胞自动机 · 状态机「正常 → 火星 → 升温 → 燃烧 → 灰烬」，外加消防队打出的湿隔离带</div>
+
+  <div class="grid">
+    <!-- 左：画布 + 统计 -->
+    <div>
+      <div class="card">
+        <div class="legend" id="legend"></div>
+        <canvas id="cv"></canvas>
+        <div class="stat" id="stat"></div>
+        <div class="row" style="margin-top:14px;border-top:1px solid #F1EEE9;padding-top:14px">
+          <button class="primary" id="play">▶ 开始</button>
+          <button id="step">⏭ 单步</button>
+          <button id="ignite">🎲 随机点火</button>
+          <button id="reset">🔄 重置</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="sec">关键实验结论（已实测，多随机种子平均）</div>
+        <div class="findings">
+          出警延迟对最终烧毁面积的影响（4 支消防队）：
+          <table>
+            <tr><td>0 轮（秒发现）</td><td>烧毁 6%</td></tr>
+            <tr><td>5 轮</td><td>烧毁 38%</td></tr>
+            <tr><td>18 轮（默认）</td><td>烧毁 55%</td></tr>
+            <tr><td>40 轮（发现太晚）</td><td>烧毁 64%</td></tr>
+          </table>
+          <p style="margin:10px 0 0">
+            这就是<b>「打早打小」</b>的数学表达：一旦火势铺开，
+            再多的消防队也追不上 —— 因为一支队一轮只能压住一两格，
+            而火线一轮能新增几十格。<b>早发现的价值远大于多派人。</b>
+          </p>
+          <p style="margin:10px 0 0">
+            消防队行为要点：从地图<b>外围消防站</b>出发，只扑<b>还在蔓延的火线</b>，
+            <b>不穿行焦土</b>，自身被火包围时<b>先撤离保命</b>；
+            湿隔离带能真正断火，但会随时间蒸干。
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右：控制 -->
+    <div>
+      <div class="card">
+        <label class="f">
+          <span>播放速度 <b id="spdLabel">3 轮/秒</b></span>
+          <input type="range" id="spd" min="0.25" max="30" step="0.25" value="3" />
+        </label>
+        <div class="chips" id="spdChips"></div>
+        <div class="tips" style="margin-top:12px">
+          火势太快看不清？拖到最左边用 <b>0.5 轮/秒</b>，或者用「单步」一轮一轮看。
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="sec" style="margin-top:0">消防队救援</div>
+        <button id="rescueToggle" style="width:100%;text-align:left;padding:10px 12px">
+          <b id="rescueState">🚒 消防队已派出</b><br>
+          <span style="font-size:11.5px;color:var(--ink3)">点击可关闭，做「无救援」对照实验</span>
+        </button>
+        <label class="f" style="margin-top:14px">
+          <span>队伍数量 <b id="crewLabel">2 支</b></span>
+          <input type="range" id="crews" min="0" max="4" step="1" value="2" />
+        </label>
+        <label class="f">
+          <span>每轮移动格数 <b id="cspeedLabel">3 格</b></span>
+          <input type="range" id="cspeed" min="1" max="8" step="1" value="3" />
+        </label>
+        <label class="f">
+          <span>出警延迟 <b id="delayLabel">18 轮</b></span>
+          <input type="range" id="delay" min="0" max="40" step="1" value="18" />
+        </label>
+        <div class="sec">扑救方式</div>
+        <div class="chips" id="modeChips"></div>
+        <div class="tips blue" style="margin-top:12px">
+          切换「只开湿隔离带」，会看到消防队不再追着火打，
+          而是抢在火头前方打湿一条蓝带 —— 这才是真实扑救大火的做法。
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="sec" style="margin-top:0">地形编辑器</div>
+        <div class="chips" id="fuelChips"></div>
+        <label class="f" style="margin-top:12px">
+          <span>笔刷大小 <b id="brushLabel">3 格宽</b></span>
+          <input type="range" id="brush" min="0" max="6" step="1" value="1" />
+        </label>
+        <div class="row">
+          <button id="fillGrass">铺满枯草</button>
+          <button id="randTerrain">随机地形</button>
+          <button id="clearFire">清空火情</button>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <button id="saveMap">↓ 保存地图</button>
+          <button id="loadMap">↑ 载入地图</button>
+        </div>
+        <div class="tips" style="margin-top:12px">
+          选一种植被后，在左侧地图上<b>按住拖动</b>即可铺地形。
+          试试用「岩石」围一圈，或者铺一条湿草带 —— 看看火还能不能过去。
+          画好的地图可以「保存地图」存成文件，下次再「载入地图」接着用。
+        </div>
+
+        <div class="scale">
+          <div class="scale-hd">
+            <span>比例尺</span><i>1 格 = 10 米</i>
+          </div>
+          <div class="scale-row"><span>整张地图</span><b>800 m × 500 m</b></div>
+          <div class="scale-row"><span>面积</span><b>40.0 公顷（0.40 km²）</b></div>
+          <div class="scale-row"><span>≈ 足球场</span><b>56 个</b></div>
+          <p class="scale-note">
+            单格约一片宅基地大小，整张图相当于一座小型林场。真实山火动辄上万亩（&gt;6 km²），
+            所以这里模拟的是一场 &lt;500 米见方的局部火 —— 重点看「规律」，不看「体量」。
+          </p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="sec" style="margin-top:0">环境参数</div>
+        <label class="f">
+          <span>空气湿度 <b id="humLabel">0.30</b></span>
+          <input type="range" id="hum" min="0" max="0.9" step="0.05" value="0.3" />
+        </label>
+        <label class="f">
+          <span>风力 <b id="windLabel">0.40</b></span>
+          <input type="range" id="wind" min="0" max="1" step="0.05" value="0.4" />
+        </label>
+        <label class="f">
+          <span>风向 <b id="dirLabel">→ 东</b></span>
+          <input type="range" id="dir" min="0" max="6" step="1" value="0" />
+        </label>
+        <div class="sec">降雨</div>
+        <div class="chips" id="rainChips"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+/* ==== 内联的模型代码（由 scripts/build-docs.mjs 自动生成）====
+   内联原因：外部 ES 模块在 file:// 或某些托管环境下加载失败，
+   会导致脚本不执行、画布黑屏。合并成单文件后免疫此问题。 */
+const M = (function () {
+/**
+ * 火灾蔓延元胞自动机 —— 核心模型
+ *
+ * 设计说明
+ * ─────────
+ * 这是一个「多阶段燃烧」元胞自动机。与传统「着/不着」二值模型不同，
+ * 每个格子要经历 5 个状态，燃料在着火前要先"被烤热"：
+ *
+ *   正常 ──→ 火星 ──→ 升温 ──→ 燃烧 ──→ 灰烬
+ *            ↓        ↓        ↓
+ *          熄灭     熄灭    持续 N 轮后转灰烬
+ *
+ * 每一步状态提升都是一次「概率判定」，受湿度、风力、燃料含水率、
+ * 降雨等参数影响 —— 这就是各种环境变量"介入"模型的地方。
+ *
+ * 核心规则（真正的元胞自动机规则，只有这一条）：
+ *   一个格子的命运，取决于它「邻居」的状态。
+ * 所有宏观现象（蔓延、跳跃、隔离带）都是这条规则 + 参数涌现出来的，
+ * 模型里没有任何一条规则直接描述"火灾的形状"。
+ */
+const STATE_META = [
+    { key: 0 /* CellState.Normal */, label: "正常", color: "#4A8538" },
+    { key: 1 /* CellState.Ember */, label: "火星", color: "#F0B429" },
+    { key: 2 /* CellState.Heating */, label: "升温", color: "#E8703A" },
+    { key: 3 /* CellState.Burning */, label: "燃烧", color: "#F65C0A" },
+    { key: 4 /* CellState.Ash */, label: "灰烬", color: "#3B3733" },
+    { key: 5 /* CellState.WetLine */, label: "湿隔离带", color: "#4E8FCB" },
+];
+const FUELS = [
+    {
+        id: "drygrass",
+        name: "枯草",
+        flammability: 0.9,
+        burnDuration: 4,
+        spreadRange: 1,
+        emberRate: 0.1,
+        moisture: 0.05,
+        color: "#D4B483",
+    },
+    {
+        id: "wetgrass",
+        name: "湿草",
+        flammability: 0.25,
+        burnDuration: 5,
+        spreadRange: 1,
+        emberRate: 0.03,
+        moisture: 0.65,
+        color: "#67A455",
+    },
+    {
+        id: "shrub",
+        name: "灌木",
+        flammability: 0.75,
+        burnDuration: 7,
+        spreadRange: 1,
+        emberRate: 0.2,
+        moisture: 0.2,
+        color: "#4A7C3F",
+    },
+    {
+        id: "conifer",
+        name: "针叶林",
+        flammability: 0.6,
+        burnDuration: 14,
+        spreadRange: 2,
+        emberRate: 0.45,
+        moisture: 0.3,
+        color: "#2A5020",
+    },
+    {
+        id: "broadleaf",
+        name: "阔叶林",
+        flammability: 0.4,
+        burnDuration: 10,
+        spreadRange: 1,
+        emberRate: 0.08,
+        moisture: 0.45,
+        color: "#386A2A",
+    },
+    {
+        id: "barren",
+        name: "沙土/岩石",
+        flammability: 0,
+        burnDuration: 0,
+        spreadRange: 0,
+        emberRate: 0,
+        moisture: 0,
+        color: "#C9BFA8",
+    },
+];
+const FUEL_MAP = Object.fromEntries(FUELS.map((f) => [f.id, f]));
+const RAIN_LEVELS = [
+    { id: "none", name: "无雨", suppress: 0, moistureAdd: 0, density: 0 },
+    { id: "light", name: "小雨", suppress: 0.05, moistureAdd: 0.002, density: 40 },
+    { id: "moderate", name: "中雨", suppress: 0.25, moistureAdd: 0.015, density: 110 },
+    { id: "heavy", name: "大雨", suppress: 0.6, moistureAdd: 0.04, density: 220 },
+    { id: "storm", name: "暴雨", suppress: 0.95, moistureAdd: 0.1, density: 380 },
+];
+const RAIN_MAP = Object.fromEntries(RAIN_LEVELS.map((r) => [r.id, r]));
+const IGNITION_CAUSES = [
+    {
+        id: "lightning",
+        name: "雷击",
+        icon: "⚡",
+        desc: "瞬间高温，直接燃起明火，常为单点",
+        startState: 3 /* CellState.Burning */,
+        scatter: 0,
+    },
+    {
+        id: "human",
+        name: "人为点火",
+        icon: "🔥",
+        desc: "从火星开始缓慢引燃，有时间被发现扑救",
+        startState: 1 /* CellState.Ember */,
+        scatter: 1,
+    },
+    {
+        id: "cigarette",
+        name: "烟头未熄",
+        icon: "🚬",
+        desc: "低概率引燃，多自己熄灭，风大时突然炸开",
+        startState: 1 /* CellState.Ember */,
+        scatter: 0,
+    },
+    {
+        id: "campfire",
+        name: "篝火失控",
+        icon: "🏕️",
+        desc: "由火堆中心向外扩张，受风向影响极大",
+        startState: 2 /* CellState.Heating */,
+        scatter: 2,
+    },
+    {
+        id: "equipment",
+        name: "设备故障",
+        icon: "⚙️",
+        desc: "多点同时起火，模拟线路老化等场景",
+        startState: 3 /* CellState.Burning */,
+        scatter: 4,
+    },
+];
+const DEFAULT_PARAMS = {
+    cols: 80,
+    rows: 50,
+    humidity: 0.3,
+    windPower: 0.4,
+    windDir: 0,
+    rain: "none",
+    animalEmber: true,
+    animalTrample: false,
+    mix: { drygrass: 30, wetgrass: 15, shrub: 15, conifer: 20, broadleaf: 10, barren: 10 },
+    seed: 20261007,
+};
+/**
+ * 一支消防队的扑救效率
+ *
+ * 现实里一支消防队不是"一个人一次泼一桶水"，
+ * 而是几台水车 + 一组人员同时作业。早期把效率压成 1 格/轮
+ * 会让消防队看起来完全没用 —— 那不真实，也观察不到价值。
+ * 1.8 格/轮意味着：小火时压得住，大火时仍然力不从心。
+ */
+const CREW_EFFECTIVENESS = 1.8;
+const RESCUE_STRATEGIES = [
+    {
+        id: "nearest",
+        name: "就近扑救",
+        desc: "直奔离自己最近的火点 —— 反应快，但容易被局部火情牵着走",
+    },
+    {
+        id: "frontline",
+        name: "沿火线推进",
+        desc: "优先处理火势最猛烈处 —— 火力集中，但移动距离可能很远",
+    },
+    {
+        id: "protect",
+        name: "优先保护植被",
+        desc: "优先扑救最易燃的区域（针叶林/枯草）—— 从源头减势",
+    },
+];
+const RESCUE_MODES = [
+    {
+        id: "auto",
+        name: "分兵：一半扑火，一半开隔离带",
+        desc: "最接近真实战术：小火集中扑灭；火大了就分兵，扑打的照常压火线，其余抢在火头前方切断",
+    },
+    {
+        id: "fight",
+        name: "只扑打明火",
+        desc: "每轮压掉 1–3 格燃烧 —— 小规模火情很有效，大火时被拖着跑",
+    },
+    {
+        id: "cutline",
+        name: "只开湿隔离带",
+        desc: "不灭火，专在火头前方打湿一条带 —— 立竿见影，但湿带会蒸干",
+    },
+];
+const DEFAULT_RESCUE = {
+    crews: 2,
+    speed: 3,
+    delay: 18,
+    strategy: "nearest",
+    mode: "auto",
+};
+/**
+ * 在地图【外围】生成消防队
+ *
+ * 现实里消防站设在城区边缘，出警后从外往里开进火场，
+ * 绝不会凭空出现在火心里。所以这里固定把队伍放在地图四周的消防站，
+ * 并且落点必须落在未燃烧的地面上（不会站在灰烬或火里）。
+ */
+function createCrews(params, grid) {
+    const crews = [];
+    const { cols, rows, state } = grid;
+    // 地图四边中点附近的消防站坐标（按顺序取用，保证分散）
+    const stations = [
+        { x: 1, y: 1 },
+        { x: cols - 2, y: 1 },
+        { x: 1, y: rows - 2 },
+        { x: cols - 2, y: rows - 2 },
+    ];
+    for (let i = 0; i < params.crews; i++) {
+        const s = stations[i % stations.length];
+        // 万一消防站位置不可用（比如正好是水塘/岩石），沿边找最近的可用格
+        let px = s.x;
+        let py = s.y;
+        if (state[py * cols + px] === 4 /* CellState.Ash */) {
+            outer: for (let r = 1; r < Math.max(cols, rows); r++) {
+                for (let dx = -r; dx <= r; dx++) {
+                    for (let dy = -r; dy <= r; dy++) {
+                        const nx = s.x + dx;
+                        const ny = s.y + dy;
+                        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
+                            continue;
+                        if (state[ny * cols + nx] !== 4 /* CellState.Ash */) {
+                            px = nx;
+                            py = ny;
+                            break outer;
+                        }
+                    }
+                }
+            }
+        }
+        crews.push({ id: i, x: px, y: py, delay: params.delay });
+    }
+    return crews;
+}
+/**
+ * 判断某格是否是"火线"上的格
+ *
+ * 火线 = 正在燃烧 / 升温 / 火星，且【四周至少有一个尚未被烧过的邻居】。
+ * 也就是说，这一格的火还在往外蔓延；如果它已经被灰烬完全包住，
+ * 说明这里的火已经烧到头了，属于"死火"，消防队没有再去的意义。
+ */
+function isFireFront(state, cols, rows, x, y) {
+    const dirs = [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+    ];
+    for (const [dx, dy] of dirs) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
+            continue;
+        const s = state[ny * cols + nx];
+        // 邻居是可燃的原始地面（正常态），说明这里有蔓延压力
+        if (s === 0 /* CellState.Normal */)
+            return true;
+    }
+    return false;
+}
+/**
+ * 寻找距 (x, y) 最近的、消防队可以站的格
+ *
+ * 灰烬（焦土）和正在燃烧的格都不能落脚。
+ * 消防队如果被火追上了（自己站的格烧起来了），必须先撤到安全地面，
+ * 否则就会被"困在灰烬里" —— 这正是现实里最危险的情况。
+ */
+function findSafeSpot(state, cols, rows, x, y, maxR = 6) {
+    if (x < 0 || y < 0 || x >= cols || y >= rows)
+        return null;
+    const s = state[y * cols + x];
+    if (s !== 4 /* CellState.Ash */ && s !== 3 /* CellState.Burning */)
+        return { x, y };
+    for (let r = 1; r <= maxR; r++) {
+        for (let dx = -r; dx <= r; dx++) {
+            for (let dy = -r; dy <= r; dy++) {
+                // 只看这一圈的边缘，避免重复检查
+                if (Math.max(Math.abs(dx), Math.abs(dy)) !== r)
+                    continue;
+                const nx = x + dx;
+                const ny = y + dy;
+                if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
+                    continue;
+                const ns = state[ny * cols + nx];
+                if (ns !== 4 /* CellState.Ash */ && ns !== 3 /* CellState.Burning */)
+                    return { x: nx, y: ny };
+            }
+        }
+    }
+    return null;
+}
+/**
+ * 从 (sx, sy) 朝 (tx, ty) 走一步，绕开灰烬和火墙
+ *
+ * 关键：消防队【停在目标旁边的安全格上】，不会走进火里。
+ * 现实里消防员是站在安全位置用水枪/灭火器压制前方的火，
+ * 绝不可能站在正在燃烧的格子里。
+ *
+ * 走法：贪心朝目标方向前进，每一格都要落在可站的地面上，
+ * 一旦下一步就是目标（或已贴到目标旁边）就停下。
+ */
+function stepToward(state, cols, rows, sx, sy, tx, ty, maxStep) {
+    let x = sx;
+    let y = sy;
+    for (let step = 0; step < maxStep; step++) {
+        // 已经贴到目标旁边 → 停下，就地压制
+        const curDist = Math.max(Math.abs(tx - x), Math.abs(ty - y));
+        if (curDist <= 1)
+            break;
+        const dx = Math.sign(tx - x);
+        const dy = Math.sign(ty - y);
+        // 候选顺序：先斜着走，再横向、再纵向，都走不通就不动
+        const tries = [
+            [dx, dy],
+            [dx, 0],
+            [0, dy],
+        ];
+        let moved = false;
+        for (const [mx, my] of tries) {
+            if (mx === 0 && my === 0)
+                continue;
+            const nx = x + mx;
+            const ny = y + my;
+            if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
+                continue;
+            // 不能踩到目标格本身（那是火）；也不能踩灰烬
+            if (nx === tx && ny === ty)
+                continue;
+            const s = state[ny * cols + nx];
+            if (s === 4 /* CellState.Ash */ || s === 3 /* CellState.Burning */)
+                continue;
+            x = nx;
+            y = ny;
+            moved = true;
+            break;
+        }
+        if (!moved)
+            break; // 被焦土和火墙挡住，本轮原地待命
+    }
+    return { x, y };
+}
+/**
+ * 每轮推进消防队
+ *
+ * 现实约束：
+ *   1. 只打【火线】—— 也就是还在往外蔓延的那一圈火，
+ *      已经烧成灰烬包围的"死火"没有扑救价值。
+ *   2. 不从灰烬里穿行 —— 焦土不可通行，所以消防队总是
+ *      从外往里压火，而不是追着火屁股跑。
+ *   3. 每队每轮【只能扑灭 1 个格】—— 火势一轮可能新增几十个
+ *      燃烧格，所以队伍少时注定压不住。这不是 bug，这就是结论。
+ */
+function stepCrews(grid, crews, params, rng) {
+    if (params.crews <= 0 || crews.length === 0) {
+        return { grid, crews, suppressed: 0, cut: 0, mode: "none" };
+    }
+    const { cols, rows, state, fuel } = grid;
+    const next = {
+        ...grid,
+        state: new Uint8Array(state),
+        age: new Uint8Array(grid.age),
+    };
+    // 只收集【火线】上的目标：正在烧、且有未燃邻居的格
+    const targets = [];
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            const i = y * cols + x;
+            const s = state[i];
+            if (s !== 3 /* CellState.Burning */ && s !== 2 /* CellState.Heating */ && s !== 1 /* CellState.Ember */) {
+                continue;
+            }
+            // 被焦土完全包围的"死火"不再处理 —— 它烧不动了
+            if (!isFireFront(state, cols, rows, x, y))
+                continue;
+            const f = FUEL_MAP[fuel[i]];
+            let prio = s === 3 /* CellState.Burning */ ? 3 : s === 2 /* CellState.Heating */ ? 2 : 1;
+            if (params.strategy === "protect" && f) {
+                // 越易燃越优先
+                prio += f.flammability * 3;
+            }
+            targets.push({ i, x, y, prio });
+        }
+    }
+    if (targets.length === 0) {
+        return { grid: next, crews, suppressed: 0, cut: 0, mode: "idle" };
+    }
+    let suppressed = 0;
+    let cut = 0;
+    /* ---- 火势规模决定「怎么打」 ----
+     * 早期版本的 auto 是「小火灾就扑打，大火灾就只开隔离带」，
+     * 结果一旦火头超过 22 格就永久切成隔离带，再也不碰明火，
+     * 实际效果跟纯 cutline 一模一样 —— 这是错的。
+     *
+     * 真实火场的做法是「两条线同时干」：
+     *   1. 少数人在火头正面扑打，压住蔓延速度；
+     *   2. 大部队在火头前方抢开隔离带，把它围起来。
+     * 所以这里改成：大火灾时把队伍分成两拨，扑打的那拨照常打火线。 */
+    const isBigFire = targets.length > 22;
+    const fullMode = params.mode === "auto" ? (isBigFire ? "cutline" : "fight") : params.mode;
+    // auto 模式下的大火灾：一半队伍扑明火，一半去开隔离带
+    const autoSplit = params.mode === "auto" && isBigFire;
+    // 对外汇报用的模式标签
+    const mode = autoSplit ? "both" : fullMode;
+    const nextCrews = crews.map((c) => ({ ...c }));
+    // auto 大火灾时，按队伍序号交替分工（0/2 扑打，1/3 开带）
+    let crewIdx = -1;
+    for (const crew of nextCrews) {
+        crewIdx += 1;
+        // 还在出警路上
+        if (crew.delay > 0) {
+            crew.delay -= 1;
+            continue;
+        }
+        /* ---- 第一步：先保证自己站在安全地面上 ----
+         * 如果火追上了消防队（自己那格烧起来了，或站到了焦土上），
+         * 必须立刻撤到最近的正常地面。这是现实里最优先的事：
+         * 消防员不会为了救火把自己搭进去，也不会傻站在灰烬堆里。 */
+        const here = next.state[crew.y * cols + crew.x];
+        if (here === 4 /* CellState.Ash */ || here === 3 /* CellState.Burning */) {
+            const safe = findSafeSpot(next.state, cols, rows, crew.x, crew.y);
+            if (safe) {
+                crew.x = safe.x;
+                crew.y = safe.y;
+                crew.delay = 1; // 撤离要花时间，本轮不再扑救
+            }
+            continue;
+        }
+        /* ---- 第二步：按模式选目标 ---- */
+        let goal = null;
+        let isCutGoal = false;
+        // auto 大火灾：偶数队扑打火线，奇数队开隔离带
+        const thisCrewCuts = autoSplit ? crewIdx % 2 === 1 : fullMode === "cutline";
+        if (thisCrewCuts) {
+            // 在火头前方找一格还没烧的地面，去打湿它
+            const ct = findCutTarget(next.state, cols, rows, crew.x, crew.y);
+            if (ct) {
+                goal = { x: ct.x, y: ct.y, i: ct.y * cols + ct.x };
+                isCutGoal = true;
+            }
+        }
+        if (!goal) {
+            // 扑打模式：选一个火线目标
+            let best = null;
+            let bestScore = -Infinity;
+            for (const t of targets) {
+                // 已经被别的队伍压掉了
+                if (next.state[t.i] === 4 /* CellState.Ash */)
+                    continue;
+                const dist = Math.max(Math.abs(t.x - crew.x), Math.abs(t.y - crew.y));
+                let score;
+                if (params.strategy === "protect") {
+                    // 优先保护易燃植被，同时不能离得太远
+                    score = t.prio * 10 - dist * 0.6;
+                }
+                else if (params.strategy === "frontline") {
+                    // 火力集中：优先扑最猛烈、最优先级的火点，距离权重最低
+                    score = t.prio * 6 - dist * 0.25;
+                }
+                else {
+                    // 就近扑救：距离为主，但给燃烧格一点额外权重
+                    score = -dist * 3 + t.prio * 0.5;
+                }
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = t;
+                }
+            }
+            if (best)
+                goal = { x: best.x, y: best.y, i: best.i };
+        }
+        if (!goal)
+            continue;
+        // 朝目标移动（绕开灰烬和火墙）
+        const moved = stepToward(next.state, cols, rows, crew.x, crew.y, goal.x, goal.y, params.speed);
+        // 落点必须安全：万一绕行把队伍送进了灰烬，就地退回
+        const land = next.state[moved.y * cols + moved.x];
+        if (land !== 4 /* CellState.Ash */ && land !== 3 /* CellState.Burning */) {
+            crew.x = moved.x;
+            crew.y = moved.y;
+        }
+        // 到达或已贴近 → 动手（本轮可处理若干格，取决于队伍战力）
+        const nowDist = Math.max(Math.abs(goal.x - crew.x), Math.abs(goal.y - crew.y));
+        if (nowDist <= 1 && goal.i !== undefined) {
+            const s = next.state[goal.i];
+            if (isCutGoal) {
+                // 打湿：把未燃地面变成湿隔离带。
+                // 开隔离带是一气呵成的，效率比逐格扑打高。
+                const quota = Math.round(CREW_EFFECTIVENESS * 1.6);
+                let done = 0;
+                if (s === 0 /* CellState.Normal */) {
+                    next.state[goal.i] = 5 /* CellState.WetLine */;
+                    next.age[goal.i] = 0;
+                    cut += 1;
+                    done = 1;
+                }
+                // 顺便把附近几格也打湿，形成连续的一条带（否则单格没有意义）
+                if (done > 0) {
+                    for (let dy = -1; dy <= 1 && done < quota; dy++) {
+                        for (let dx = -1; dx <= 1 && done < quota; dx++) {
+                            const nx = goal.x + dx;
+                            const ny = goal.y + dy;
+                            if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
+                                continue;
+                            const j = ny * cols + nx;
+                            if (next.state[j] === 0 /* CellState.Normal */) {
+                                next.state[j] = 5 /* CellState.WetLine */;
+                                next.age[j] = 0;
+                                done += 1;
+                                cut += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            else if (s !== 0 /* CellState.Normal */ && s !== 4 /* CellState.Ash */) {
+                // 直接压灭燃烧/升温/火星的格；一支队一轮能压若干格
+                next.state[goal.i] = 4 /* CellState.Ash */;
+                next.age[goal.i] = 0;
+                suppressed += 1;
+                // 顺带压制紧邻的其它火点
+                let quota = Math.round(CREW_EFFECTIVENESS) - 1;
+                for (let dy = -1; dy <= 1 && quota > 0; dy++) {
+                    for (let dx = -1; dx <= 1 && quota > 0; dx++) {
+                        const nx = goal.x + dx;
+                        const ny = goal.y + dy;
+                        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
+                            continue;
+                        const j = ny * cols + nx;
+                        const js = next.state[j];
+                        if (js === 3 /* CellState.Burning */ || js === 2 /* CellState.Heating */) {
+                            next.state[j] = 4 /* CellState.Ash */;
+                            next.age[j] = 0;
+                            suppressed += 1;
+                            quota -= 1;
+                        }
+                    }
+                }
+            }
+        }
+        // 极小概率队伍"体力不支"暂时减速（随机性）
+        if (rng() < 0.02)
+            crew.delay = 1;
+    }
+    return { grid: next, crews: nextCrews, suppressed, cut, mode };
+}
+/**
+ * 找出「火头前方的待守格」—— 也就是最该打湿的那一格
+ *
+ * 真实扑救不是追着火线打，而是判断火往哪边烧，
+ * 然后抢在它前面把那条线打湿。这里用最简单的判据：
+ * 找到一个【尚未燃烧】、且紧邻燃烧格的格，它离队伍越近越好。
+ * 打湿它，火就少一个可以蔓延的出口。
+ */
+function findCutTarget(state, cols, rows, crewX, crewY) {
+    let best = null;
+    let bestScore = -Infinity;
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            const i = y * cols + x;
+            const s = state[i];
+            // 只能打湿「还能烧起来」的原始地面
+            if (s !== 0 /* CellState.Normal */)
+                continue;
+            // 它必须紧邻燃烧格，才算是"火头前方"
+            let touchFire = false;
+            for (let dy = -1; dy <= 1 && !touchFire; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    if (dx === 0 && dy === 0)
+                        continue;
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
+                        continue;
+                    if (state[ny * cols + nx] === 3 /* CellState.Burning */) {
+                        touchFire = true;
+                        break;
+                    }
+                }
+            }
+            if (!touchFire)
+                continue;
+            const dist = Math.max(Math.abs(x - crewX), Math.abs(y - crewY));
+            // 越近越好；同距离时偏向靠近地图中心（那里通常火势最盛）
+            const score = -dist;
+            if (score > bestScore) {
+                bestScore = score;
+                best = { x, y };
+            }
+        }
+    }
+    return best;
+}
+/* ============================================================
+ * 六、可复现的伪随机数
+ *
+ * 科学探究要求同一组参数能跑出同样的结果，
+ * 所以不用 Math.random()，改用带种子的 mulberry32。
+ * ============================================================ */
+function makeRng(seed) {
+    let a = seed >>> 0;
+    return function rng() {
+        a |= 0;
+        a = (a + 0x6d2b79f5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+/** 生成初始地图 */
+function createGrid(params) {
+    const { cols, rows } = params;
+    const rng = makeRng(params.seed);
+    const total = cols * rows;
+    /* ------------------------------------------------------------
+     * 地块生成：先随机撒点，再做「多数平滑」
+     *
+     * 为什么要平滑？如果每一格都独立随机取值，
+     * 整张图会变成"胡椒盐"—— 没有任何成片的结构，
+     * 火一烧就到处都是，既不像真实地形，
+     * 也让"隔离带"这种战术完全无用武之地。
+     *
+     * 真实地形是【成片】的：一片针叶林连着几百米，
+     * 一条河/一片岩地横贯全场。所以这里用元胞自动机自己的
+     * 老朋友 —— 多数投票平滑 —— 来生成有连通性的地块。
+     * ---------------------------------------------------------- */
+    // 第一步：按权重随机撒点，得到"初始噪声"
+    const entries = Object.entries(params.mix).filter(([, v]) => v > 0);
+    const sum = entries.reduce((s, [, v]) => s + v, 0) || 1;
+    const acc = [];
+    let running = 0;
+    for (const [id, v] of entries) {
+        running += v / sum;
+        acc.push([id, running]);
+    }
+    const pickOne = () => {
+        const r = rng();
+        for (const [id, threshold] of acc) {
+            if (r <= threshold)
+                return id;
+        }
+        return acc[acc.length - 1]?.[0] ?? "barren";
+    };
+    let fuel = new Array(total);
+    for (let i = 0; i < total; i++)
+        fuel[i] = pickOne();
+    // 第二步：多数平滑若干轮，让同类地块聚成片
+    for (let pass = 0; pass < 4; pass++) {
+        const out = fuel.slice();
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                // 数一数 3×3 邻域里各燃料各有多少格
+                const tally = {};
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        const nx = x + dx;
+                        const ny = y + dy;
+                        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
+                            continue;
+                        const id = fuel[ny * cols + nx];
+                        tally[id] = (tally[id] ?? 0) + 1;
+                    }
+                }
+                let bestId = fuel[y * cols + x];
+                let bestN = -1;
+                for (const [id, n] of Object.entries(tally)) {
+                    if (n > bestN) {
+                        bestN = n;
+                        bestId = id;
+                    }
+                }
+                out[y * cols + x] = bestId;
+            }
+        }
+        fuel = out;
+    }
+    /* ------------------------------------------------------------
+     * 第三步：开几条「天然屏障」
+     *
+     * 真实的火场之所以能被控制住，靠的往往不是人多，
+     * 而是地形本身：一条河、一条公路、一片裸岩，火过不去。
+     * 这里随机开 1-3 条贯穿全图的屏障，给"隔离带战术"留出支点。
+     * ---------------------------------------------------------- */
+    const barrierCount = 1 + Math.floor(rng() * 3);
+    for (let b = 0; b < barrierCount; b++) {
+        const vertical = rng() < 0.5;
+        // 屏障要有厚度，太薄了火可能从边上"蹭"过去
+        const thickness = 2 + Math.floor(rng() * 2);
+        if (vertical) {
+            // 竖着来一条，位置带点弯曲（更像河道）
+            let x = Math.floor(cols * (0.2 + rng() * 0.6));
+            for (let y = 0; y < rows; y++) {
+                for (let w = 0; w < thickness; w++) {
+                    const xx = x + w;
+                    if (xx >= 0 && xx < cols)
+                        fuel[y * cols + xx] = "barren";
+                }
+                // 弯曲幅度小一点，避免屏障自己断开
+                if (rng() < 0.3)
+                    x += rng() < 0.5 ? -1 : 1;
+                x = Math.max(1, Math.min(cols - thickness - 1, x));
+            }
+        }
+        else {
+            let y = Math.floor(rows * (0.2 + rng() * 0.6));
+            for (let x = 0; x < cols; x++) {
+                for (let w = 0; w < thickness; w++) {
+                    const yy = y + w;
+                    if (yy >= 0 && yy < rows)
+                        fuel[yy * cols + x] = "barren";
+                }
+                if (rng() < 0.3)
+                    y += rng() < 0.5 ? -1 : 1;
+                y = Math.max(1, Math.min(rows - thickness - 1, y));
+            }
+        }
+    }
+    const moisture = new Float32Array(total);
+    for (let i = 0; i < total; i++) {
+        // 在燃料固有含水率上叠加一点个体差异，让画面更自然
+        const base = FUEL_MAP[fuel[i]]?.moisture ?? 0;
+        moisture[i] = clamp01(base + (rng() - 0.5) * 0.08);
+    }
+    return {
+        cols,
+        rows,
+        fuel,
+        state: new Uint8Array(total),
+        age: new Uint8Array(total),
+        moisture,
+    };
+}
+/**
+ * 生成一张「空白」地图，用于自己动手画地形
+ *
+ * 默认铺满枯草（最容易烧），玩家可以像画画一样
+ * 刷上针叶林、湿草、岩石，自己设计一片考场。
+ */
+function createBlankGrid(params, defaultFuel = "drygrass") {
+    const { cols, rows } = params;
+    const total = cols * rows;
+    const fuel = new Array(total).fill(defaultFuel);
+    const moisture = new Float32Array(total);
+    const base = FUEL_MAP[defaultFuel]?.moisture ?? 0;
+    for (let i = 0; i < total; i++)
+        moisture[i] = base;
+    return {
+        cols,
+        rows,
+        fuel,
+        state: new Uint8Array(total),
+        age: new Uint8Array(total),
+        moisture,
+    };
+}
+/**
+ * 在地图上刷一块地形（用于地形编辑器）
+ *
+ * 用圆盘而不是单格，手感更接近"刷子"；
+ * 半径 0 就是单格画笔。
+ */
+function paintFuel(grid, cx, cy, fuelId, radius = 0) {
+    const { cols, rows } = grid;
+    const fuel = grid.fuel.slice();
+    const moisture = new Float32Array(grid.moisture);
+    const state = new Uint8Array(grid.state);
+    const base = FUEL_MAP[fuelId]?.moisture ?? 0;
+    for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+            // 圆形笔刷
+            if (dx * dx + dy * dy > radius * radius + 0.5)
+                continue;
+            const x = cx + dx;
+            const y = cy + dy;
+            if (x < 0 || y < 0 || x >= cols || y >= rows)
+                continue;
+            const i = y * cols + x;
+            fuel[i] = fuelId;
+            moisture[i] = base;
+            // 刷过的地方恢复成未燃状态，避免残留火/灰
+            state[i] = 0 /* CellState.Normal */;
+        }
+    }
+    return { ...grid, fuel, moisture, state };
+}
+function stepGrid(grid, params, turn, rng) {
+    const { cols, rows, fuel, state, age, moisture } = grid;
+    const nextState = new Uint8Array(state);
+    const nextAge = new Uint8Array(age);
+    const nextMoisture = new Float32Array(moisture);
+    const rain = RAIN_MAP[params.rain] ?? RAIN_MAP.none;
+    // 风向单位向量：风把火往这个方向推
+    const windX = Math.cos(params.windDir);
+    const windY = Math.sin(params.windDir);
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            const i = y * cols + x;
+            const f = FUEL_MAP[fuel[i]];
+            if (!f)
+                continue;
+            const s = state[i];
+            /* ---- 不可燃格永远不动 ---- */
+            if (f.flammability <= 0) {
+                nextState[i] = 0 /* CellState.Normal */;
+                nextAge[i] = 0;
+                continue;
+            }
+            /* ---- 灰烬：不参与传播，但会挡火（这里什么都不做就是"挡"） ---- */
+            if (s === 4 /* CellState.Ash */) {
+                nextAge[i] = age[i];
+                continue;
+            }
+            /* ---- 湿隔离带：极难被点燃，但会随时间蒸干 ---- */
+            if (s === 5 /* CellState.WetLine */) {
+                const a = age[i] + 1;
+                // 湿带能撑 hold 轮；雨越大，干得越慢。
+                // 这是个关键可调量：湿带越持久，隔离带战术越有效。
+                const hold = Math.round(24 + rain.suppress * 30);
+                if (a >= hold) {
+                    nextState[i] = 0 /* CellState.Normal */;
+                    nextAge[i] = 0;
+                    nextMoisture[i] = clamp01(moisture[i] - 0.15);
+                }
+                else {
+                    nextAge[i] = a;
+                }
+                continue;
+            }
+            /* ---- 燃烧：维持 N 轮后转灰烬 ---- */
+            if (s === 3 /* CellState.Burning */) {
+                const a = age[i] + 1;
+                if (a >= f.burnDuration) {
+                    nextState[i] = 4 /* CellState.Ash */;
+                    nextAge[i] = 0;
+                    // 烧完之后该处变干，为后续复燃留伏笔
+                    nextMoisture[i] = clamp01(moisture[i] - 0.1);
+                }
+                else {
+                    nextAge[i] = a;
+                }
+                continue;
+            }
+            /* ---- 火星 / 升温：向上提升的判定 ---- */
+            if (s === 1 /* CellState.Ember */ || s === 2 /* CellState.Heating */) {
+                // 被雨压制得越强，越可能退回正常（相当于被浇灭）
+                if (rain.suppress > 0 && rng() < rain.suppress * 0.5) {
+                    nextState[i] = 0 /* CellState.Normal */;
+                    nextAge[i] = 0;
+                    continue;
+                }
+                // 提升概率 = 燃料可燃性 × 干旱度 × (1-雨压制)
+                const dryness = 1 - moisture[i];
+                let promote = f.flammability * (0.35 + 0.65 * dryness) * (1 - rain.suppress);
+                // 已升温的更容易烧起来（火在烤它）
+                if (s === 2 /* CellState.Heating */)
+                    promote *= 1.8;
+                promote = clamp01(promote);
+                // 火星 → 升温 → 燃烧 是多阶段过程，每一步都要花时间。
+                // 系数调小，火就不会"一轮从火星跳到明火"。
+                if (rng() < promote * 0.28) {
+                    nextState[i] =
+                        s === 1 /* CellState.Ember */ ? 2 /* CellState.Heating */ : 3 /* CellState.Burning */;
+                    nextAge[i] = 0;
+                }
+                continue;
+            }
+            /* ---- 正常格：看邻居有没有火，决定是否被点燃 ---- */
+            let fireNeighbors = 0;
+            let windBonus = 0;
+            let maxRange = 1;
+            // 先扫一圈找出最大传火距离（针叶林能跳 2 格）
+            for (let dy = -2; dy <= 2; dy++) {
+                for (let dx = -2; dx <= 2; dx++) {
+                    if (dx === 0 && dy === 0)
+                        continue;
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
+                        continue;
+                    const j = ny * cols + nx;
+                    if (state[j] !== 3 /* CellState.Burning */)
+                        continue;
+                    const nf = FUEL_MAP[fuel[j]];
+                    if (!nf)
+                        continue;
+                    const dist = Math.max(Math.abs(dx), Math.abs(dy));
+                    if (dist > nf.spreadRange)
+                        continue;
+                    maxRange = Math.max(maxRange, nf.spreadRange);
+                    fireNeighbors += dist === 1 ? 1 : 0.5;
+                    // 风向加成：火源在"上风向"时更容易烧过来
+                    const dirX = dx / (dist || 1);
+                    const dirY = dy / (dist || 1);
+                    const align = dirX * windX + dirY * windY;
+                    windBonus += align * params.windPower * 0.8;
+                }
+            }
+            if (fireNeighbors > 0) {
+                const dryness = 1 - moisture[i];
+                // 基础蔓延概率整体压低：火要慢慢"啃"过去，
+                // 而不是一轮就窜出几十格 —— 那样既看不清过程，
+                // 也根本不给消防队留出任何干预的窗口。
+                let p = f.flammability *
+                    0.42 *
+                    (0.12 + 0.88 * dryness) *
+                    (1 - rain.suppress) *
+                    (1 - params.humidity * 0.75);
+                // 邻居越多越容易着；顺风方向加成
+                p *= 1 + Math.min(fireNeighbors, 4) * 0.16;
+                p *= 1 + clamp(windBonus / Math.max(fireNeighbors, 1), -0.5, 1.0);
+                // 针叶林这类"飞火"燃料，即使隔得远也有机会
+                p *= 1 + f.emberRate * 0.5;
+                p = clamp01(p);
+                if (rng() < p) {
+                    nextState[i] = 1 /* CellState.Ember */;
+                    nextAge[i] = 0;
+                }
+            }
+        }
+    }
+    /* ---- 动物扰动：飞火（跳到远处） ---- */
+    if (params.animalEmber) {
+        const burningCells = [];
+        for (let i = 0; i < state.length; i++) {
+            if (state[i] === 3 /* CellState.Burning */)
+                burningCells.push(i);
+        }
+        if (burningCells.length > 0) {
+            // 火越大，飞火越频繁，但给一个上限避免爆炸
+            const attempts = Math.min(3, Math.ceil(burningCells.length / 120));
+            for (let k = 0; k < attempts; k++) {
+                const src = burningCells[Math.floor(rng() * burningCells.length)];
+                const srcF = FUEL_MAP[fuel[src]];
+                if (!srcF || rng() > srcF.emberRate * 1.6)
+                    continue;
+                // 顺风方向飘一段距离
+                const dist = 4 + Math.floor(rng() * 8);
+                const sx = src % cols;
+                const sy = Math.floor(src / cols);
+                const tx = Math.round(sx + windX * dist + (rng() - 0.5) * 6);
+                const ty = Math.round(sy + windY * dist + (rng() - 0.5) * 6);
+                if (tx < 0 || ty < 0 || tx >= cols || ty >= rows)
+                    continue;
+                const ti = ty * cols + tx;
+                const tf = FUEL_MAP[fuel[ti]];
+                if (!tf || tf.flammability <= 0)
+                    continue;
+                if (nextState[ti] === 0 /* CellState.Normal */ && rng() < 0.55) {
+                    nextState[ti] = 1 /* CellState.Ember */;
+                    nextAge[ti] = 0;
+                }
+            }
+        }
+    }
+    /* ---- 动物扰动：踩踏（踩出隔离带） ---- */
+    if (params.animalTrample && rng() < 0.06) {
+        const bx = Math.floor(rng() * cols);
+        const by = Math.floor(rng() * rows);
+        const r = 1 + Math.floor(rng() * 2);
+        for (let dy = -r; dy <= r; dy++) {
+            for (let dx = -r; dx <= r; dx++) {
+                const nx = bx + dx;
+                const ny = by + dy;
+                if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
+                    continue;
+                const j = ny * cols + nx;
+                const nf = FUEL_MAP[fuel[j]];
+                if (!nf || nf.flammability <= 0)
+                    continue;
+                if (nextState[j] === 0 /* CellState.Normal */) {
+                    // 踩踏把植被压成裸地，直接用 barren 的燃料 id
+                    fuel[j] = "barren";
+                    nextMoisture[j] = 0;
+                }
+            }
+        }
+    }
+    /* ---- 降雨给全场补水 ---- */
+    if (rain.moistureAdd > 0) {
+        for (let i = 0; i < nextMoisture.length; i++) {
+            const f = FUEL_MAP[fuel[i]];
+            if (!f || f.flammability <= 0)
+                continue;
+            nextMoisture[i] = clamp01(nextMoisture[i] + rain.moistureAdd);
+        }
+    }
+    const nextGrid = {
+        ...grid,
+        state: nextState,
+        age: nextAge,
+        moisture: nextMoisture,
+    };
+    const snapshot = countStates(nextGrid, turn);
+    const extinguished = snapshot.burning === 0 && snapshot.ember === 0 && snapshot.heating === 0;
+    return { grid: nextGrid, snapshot, extinguished };
+}
+/* ============================================================
+ * 九、统计与工具函数
+ * ============================================================ */
+function countStates(grid, turn) {
+    const c = [0, 0, 0, 0, 0, 0];
+    const { state, fuel } = grid;
+    for (let i = 0; i < state.length; i++) {
+        const f = FUEL_MAP[fuel[i]];
+        // 不可燃格算作"正常"，不参与统计口径的干扰
+        if (f && f.flammability <= 0) {
+            c[0 /* CellState.Normal */]++;
+            continue;
+        }
+        c[state[i]]++;
+    }
+    return {
+        turn,
+        normal: c[0],
+        ember: c[1],
+        heating: c[2],
+        burning: c[3],
+        ash: c[4],
+        wetline: c[5],
+    };
+}
+function clamp01(v) {
+    return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+function clamp(v, lo, hi) {
+    return v < lo ? lo : v > hi ? hi : v;
+}
+/** 统计可燃格总数，用于算"烧毁占比" */
+function countFlammable(grid) {
+    let n = 0;
+    for (const id of grid.fuel) {
+        const f = FUEL_MAP[id];
+        if (f && f.flammability > 0)
+            n++;
+    }
+    return n;
+}
+/** 在指定位置点火 */
+function igniteAt(grid, x, y, cause) {
+    const next = { ...grid, state: new Uint8Array(grid.state), age: new Uint8Array(grid.age) };
+    const { cols, rows } = grid;
+    const r = cause.scatter;
+    for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
+                continue;
+            const i = ny * cols + nx;
+            const f = FUEL_MAP[grid.fuel[i]];
+            if (!f || f.flammability <= 0)
+                continue;
+            if (next.state[i] === 0 /* CellState.Normal */) {
+                next.state[i] = cause.startState;
+                next.age[i] = 0;
+            }
+        }
+    }
+    return next;
+}
+/** 计算当前火势规模，用于"扑救是否跟得上"的反馈 */
+function countBurning(grid) {
+    let n = 0;
+    for (let i = 0; i < grid.state.length; i++) {
+        if (grid.state[i] === 3 /* CellState.Burning */)
+            n++;
+    }
+    return n;
+}
+
+  return { STATE_META, FUELS, FUEL_MAP, RAIN_LEVELS, RAIN_MAP, IGNITION_CAUSES, DEFAULT_PARAMS, RESCUE_STRATEGIES, RESCUE_MODES, DEFAULT_RESCUE, createCrews, stepCrews, makeRng, createGrid, createBlankGrid, paintFuel, stepGrid, countStates, clamp01, clamp, countFlammable, igniteAt, countBurning };
+})();
+const A = { NORMAL:0, EMBER:1, HEAT:2, BURN:3, ASH:4, WET:5 };
+const CELL = 11, MARGIN = 1;
+
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+
+let params = { ...M.DEFAULT_PARAMS };
+let rescue = { ...M.DEFAULT_RESCUE, delay: 18 };
+let grid = M.createGrid(params);
+let crews = [];
+let rng = M.makeRng(params.seed);
+let turn = 0, running = false, speed = 3;
+let snaps = [], suppressed = 0, cut = 0;
+let paintMode = false, brush = "conifer", brushRadius = 1;
+let timer = null;
+
+/* ---------- 图例 ---------- */
+const legendEl = document.getElementById("legend");
+M.STATE_META.forEach(s => {
+  legendEl.insertAdjacentHTML("beforeend",
+    `<span><i class="sw" style="background:${s.color}"></i>${s.label}</span>`);
+});
+legendEl.insertAdjacentHTML("beforeend",
+  `<span><i class="sw" style="background:#2E6FB8;border-radius:50%"></i>消防队</span>`);
+
+/* ---------- 画布 ---------- */
+function resize() {
+  const w = grid.cols * CELL, h = grid.rows * CELL;
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = w * dpr; cv.height = h * dpr;
+  cv.style.width = w + "px"; cv.style.height = h + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function draw() {
+  const { cols, rows } = grid;
+  ctx.fillStyle = "#FAF9F7";
+  ctx.fillRect(0, 0, cols * CELL, rows * CELL);
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const i = y * cols + x;
+      const f = M.FUEL_MAP[grid.fuel[i]];
+      const st = grid.state[i];
+      let color;
+      if (!f || f.flammability <= 0) color = "#C9BFA8";
+      else if (st === A.ASH) color = "#3B3733";
+      else if (st === A.WET) color = "#4E8FCB";
+      else if (st === A.BURN) {
+        const t = (turn + i * 7) % 3;
+        color = t === 0 ? "#F65C0A" : t === 1 ? "#FF7A2F" : "#FFB020";
+      }
+      else if (st === A.HEAT) color = "#E8703A";
+      else if (st === A.EMBER) color = "#F0B429";
+      else {
+        color = f.color;
+        if (grid.moisture[i] > 0.5) color = "#7FBF6A";
+      }
+      ctx.fillStyle = color;
+      ctx.fillRect(x * CELL, y * CELL, CELL - MARGIN, CELL - MARGIN);
+    }
+  }
+
+  // 消防队
+  for (const c of crews) {
+    const px = c.x * CELL + CELL / 2, py = c.y * CELL + CELL / 2;
+    if (c.delay <= 0) {
+      ctx.beginPath();
+      ctx.arc(px, py, CELL * 1.5, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(78,143,203,0.13)";
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.arc(px, py, CELL * 0.52, 0, Math.PI * 2);
+    ctx.fillStyle = c.delay > 0 ? "#8FAECC" : "#2E6FB8";
+    ctx.fill();
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2; ctx.stroke();
+    if (c.delay > 0) {
+      ctx.strokeStyle = "#2E6FB8"; ctx.lineWidth = 1;
+      ctx.strokeRect(px - CELL * 0.75, py - CELL * 0.75, CELL * 1.5, CELL * 1.5);
+    }
+  }
+}
+
+/* ---------- 统计 ---------- */
+function updateStat() {
+  const s = M.countStates(grid, turn);
+  const flam = M.countFlammable(grid) || 1;
+  document.getElementById("stat").innerHTML =
+    `第 <b>${turn}</b> 轮 · 燃烧 <b style="color:#F65C0A">${s.burning}</b> 格 · ` +
+    `灰烬 <b>${s.ash}</b> 格 · 烧毁率 <b>${(s.ash / flam * 100).toFixed(1)}%</b> · ` +
+    `湿隔离带 <b style="color:#4E8FCB">${s.wetline}</b> 格 · ` +
+    (rescue.crews > 0 ? `已扑救 <b style="color:#2E6FB8">${suppressed}</b> 格` : `<b>无消防队</b>`);
+}
+
+/* ---------- 循环 ---------- */
+function oneStep() {
+  const fire = M.stepGrid(grid, params, turn, rng);
+  const resc = M.stepCrews(
+    fire.grid,
+    crews.length > 0 ? crews : M.createCrews(rescue, fire.grid),
+    rescue, rng
+  );
+  crews = resc.crews;
+  suppressed += resc.suppressed;
+  cut += resc.cut;
+  grid = resc.grid;
+  const s = M.countStates(grid, turn);
+  snaps.push(s);
+  turn++;
+  draw(); updateStat();
+  if (s.burning === 0 && s.ember === 0 && s.heating === 0) setRun(false);
+}
+
+function setRun(v) {
+  running = v;
+  document.getElementById("play").textContent = running ? "⏸ 暂停" : "▶ 开始";
+  if (timer) { clearTimeout(timer); timer = null; }
+  if (running) tick();
+}
+function tick() {
+  if (!running) return;
+  const ms = Math.min(4000, Math.max(40, 1000 / speed));
+  timer = setTimeout(() => { oneStep(); tick(); }, ms);
+}
+
+/* ---------- 交互 ---------- */
+function cellFromEvent(e) {
+  const r = cv.getBoundingClientRect();
+  return {
+    x: Math.floor((e.clientX - r.left) / CELL),
+    y: Math.floor((e.clientY - r.top) / CELL),
+  };
+}
+let dragging = false;
+
+cv.addEventListener("mousedown", e => {
+  dragging = true;
+  const { x, y } = cellFromEvent(e);
+  if (x < 0 || y < 0 || x >= grid.cols || y >= grid.rows) return;
+  if (paintMode) grid = M.paintFuel(grid, x, y, brush, brushRadius);
+  else grid = M.igniteAt(grid, x, y, M.IGNITION_CAUSES[0]);
+  if (!paintMode && crews.length === 0) crews = M.createCrews(rescue, grid);
+  draw(); updateStat();
+});
+cv.addEventListener("mousemove", e => {
+  if (!dragging) return;
+  const { x, y } = cellFromEvent(e);
+  if (x < 0 || y < 0 || x >= grid.cols || y >= grid.rows) return;
+  if (paintMode) grid = M.paintFuel(grid, x, y, brush, brushRadius);
+  draw(); updateStat();
+});
+window.addEventListener("mouseup", () => { dragging = false; });
+
+document.getElementById("play").onclick = () => {
+  if (snaps.length === 0) {
+    for (let k = 0; k < 2; k++) {
+      grid = M.igniteAt(grid, Math.floor(rng() * grid.cols), Math.floor(rng() * grid.rows), M.IGNITION_CAUSES[0]);
+    }
+    crews = M.createCrews(rescue, grid);
+  }
+  setRun(!running);
+};
+document.getElementById("step").onclick = () => { setRun(false); oneStep(); };
+document.getElementById("ignite").onclick = () => {
+  setRun(false);
+  for (let k = 0; k < 3; k++) {
+    grid = M.igniteAt(grid, Math.floor(rng() * grid.cols), Math.floor(rng() * grid.rows), M.IGNITION_CAUSES[0]);
+  }
+  if (crews.length === 0) crews = M.createCrews(rescue, grid);
+  draw(); updateStat();
+};
+document.getElementById("reset").onclick = () => {
+  setRun(false);
+  rng = M.makeRng(params.seed);
+  grid = M.createGrid(params);
+  crews = []; snaps = []; turn = 0; suppressed = 0; cut = 0;
+  draw(); updateStat();
+};
+
+/* 速度 */
+const spd = document.getElementById("spd");
+spd.oninput = () => {
+  speed = Number(spd.value);
+  document.getElementById("spdLabel").textContent =
+    speed < 1 ? `${Math.round(speed * 1000)} 毫秒/轮` : `${speed} 轮/秒`;
+};
+document.getElementById("spdChips").innerHTML =
+  [[0.5, "0.5×超慢"], [1, "1×"], [3, "3×"], [8, "8×"], [20, "20×"]]
+    .map(([v, l]) => `<div class="chip" data-v="${v}">${l}</div>`).join("");
+document.querySelectorAll("#spdChips .chip").forEach(c => {
+  c.onclick = () => { spd.value = c.dataset.v; spd.oninput(); };
+});
+
+/* 消防队 */
+const crewsEl = document.getElementById("crews");
+crewsEl.oninput = () => {
+  rescue.crews = Number(crewsEl.value);
+  document.getElementById("crewLabel").textContent = rescue.crews + " 支";
+  document.getElementById("rescueState").textContent =
+    rescue.crews === 0 ? "🙅 无消防队（对照组）" : "🚒 消防队已派出";
+  if (rescue.crews > 0) crews = M.createCrews(rescue, grid);
+  else crews = [];
+  draw(); updateStat();
+};
+document.getElementById("rescueToggle").onclick = () => {
+  crewsEl.value = rescue.crews === 0 ? 2 : 0;
+  crewsEl.oninput();
+};
+const csEl = document.getElementById("cspeed");
+csEl.oninput = () => {
+  rescue.speed = Number(csEl.value);
+  document.getElementById("cspeedLabel").textContent = rescue.speed + " 格";
+};
+const dEl = document.getElementById("delay");
+dEl.oninput = () => {
+  rescue.delay = Number(dEl.value);
+  document.getElementById("delayLabel").textContent = rescue.delay + " 轮";
+};
+
+document.getElementById("modeChips").innerHTML =
+  M.RESCUE_MODES.map(m => `<div class="chip" data-id="${m.id}" title="${m.desc}">${m.name}</div>`).join("");
+document.querySelectorAll("#modeChips .chip").forEach(c => {
+  c.onclick = () => {
+    rescue.mode = c.dataset.id;
+    document.querySelectorAll("#modeChips .chip").forEach(o => o.classList.toggle("on", o === c));
+  };
+});
+document.querySelector('#modeChips .chip[data-id="auto"]').classList.add("on");
+
+/* 植被画笔 */
+document.getElementById("fuelChips").innerHTML =
+  M.FUELS.map(f => `<div class="chip" data-id="${f.id}">${f.name}</div>`).join("");
+document.querySelectorAll("#fuelChips .chip").forEach(c => {
+  c.onclick = () => {
+    brush = c.dataset.id; paintMode = true;
+    document.querySelectorAll("#fuelChips .chip").forEach(o => o.classList.toggle("on", o === c));
+  };
+});
+document.querySelector('#fuelChips .chip[data-id="conifer"]').classList.add("on");
+document.getElementById("brush").oninput = (e) => {
+  brushRadius = Number(e.target.value);
+  document.getElementById("brushLabel").textContent =
+    brushRadius === 0 ? "单格" : `${brushRadius * 2 + 1} 格宽`;
+};
+document.getElementById("fillGrass").onclick = () => {
+  setRun(false); rng = M.makeRng(params.seed);
+  grid = M.createBlankGrid(params, "drygrass");
+  crews = []; snaps = []; turn = 0; suppressed = 0; cut = 0;
+  draw(); updateStat();
+};
+document.getElementById("randTerrain").onclick = () => {
+  setRun(false); rng = M.makeRng(params.seed);
+  grid = M.createGrid(params);
+  crews = []; snaps = []; turn = 0; suppressed = 0; cut = 0;
+  draw(); updateStat();
+};
+document.getElementById("clearFire").onclick = () => {
+  setRun(false);
+  grid = { ...grid, state: new Uint8Array(grid.state.length), age: new Uint8Array(grid.age.length) };
+  crews = []; snaps = []; turn = 0; suppressed = 0; cut = 0;
+  draw(); updateStat();
+};
+/* 地图存档：把植被/湿度/火情打包成 json 下载 */
+document.getElementById("saveMap").onclick = () => {
+  const data = {
+    format: "ca-fire-map", version: 1,
+    cols: grid.cols, rows: grid.rows, metersPerCell: 10,
+    savedAt: new Date().toISOString(),
+    fuel: Array.from(grid.fuel),
+    moisture: Array.from(grid.moisture).map((m) => Number(m.toFixed(3))),
+    state: Array.from(grid.state),
+  };
+  const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `火场地图_${params.seed}.json`; a.click();
+  URL.revokeObjectURL(url);
+};
+document.getElementById("loadMap").onclick = () => {
+  const input = document.createElement("input");
+  input.type = "file"; input.accept = ".json,application/json";
+  input.onchange = () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const d = JSON.parse(reader.result);
+        if (d.format !== "ca-fire-map" || !Array.isArray(d.fuel)) return alert("这不是本沙盒保存的地图文件");
+        if (d.cols !== grid.cols || d.rows !== grid.rows)
+          return alert(`地图尺寸不符（存档 ${d.cols}×${d.rows}，当前 ${grid.cols}×${grid.rows}）`);
+        setRun(false);
+        grid = {
+          cols: d.cols, rows: d.rows,
+          fuel: d.fuel.slice(),
+          moisture: Float32Array.from(d.moisture || new Array(d.fuel.length).fill(0.3)),
+          state: Uint8Array.from(d.state || new Array(d.fuel.length).fill(0)),
+          age: new Uint8Array(d.fuel.length),
+        };
+        crews = []; snaps = []; turn = 0; suppressed = 0; cut = 0;
+        draw(); updateStat();
+      } catch { alert("地图文件解析失败"); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+};
+
+/* 环境 */
+const humEl = document.getElementById("hum");
+humEl.oninput = () => {
+  params.humidity = Number(humEl.value);
+  document.getElementById("humLabel").textContent = params.humidity.toFixed(2);
+};
+const windEl = document.getElementById("wind");
+windEl.oninput = () => {
+  params.windPower = Number(windEl.value);
+  document.getElementById("windLabel").textContent = params.windPower.toFixed(2);
+};
+const dirNames = ["→ 东", "↘ 东南", "↓ 南", "↙ 西南", "← 西", "↖ 西北", "↑ 北"];
+document.getElementById("dir").oninput = (e) => {
+  const k = Number(e.target.value);
+  params.windDir = (k * Math.PI) / 3;
+  document.getElementById("dirLabel").textContent = dirNames[k % 7];
+};
+
+document.getElementById("rainChips").innerHTML =
+  M.RAIN_LEVELS.map(r => `<div class="chip" data-id="${r.id}">${r.name}</div>`).join("");
+document.querySelectorAll("#rainChips .chip").forEach(c => {
+  c.onclick = () => {
+    params.rain = c.dataset.id;
+    document.querySelectorAll("#rainChips .chip").forEach(o => o.classList.toggle("on", o === c));
+  };
+});
+document.querySelector('#rainChips .chip[data-id="none"]').classList.add("on");
+
+/* 启动 */
+resize(); draw(); updateStat();
+document.getElementById("spdLabel").textContent = "3 轮/秒";
+</script>
+</body>
+</html>
