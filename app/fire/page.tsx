@@ -710,7 +710,23 @@ export default function FirePage() {  const [params, setParamsState] = useState<
   }
 
   const summary = snapshots.length > 0 ? buildSummary(makeRecord()) : null;
-  const burning = snapshots[snapshots.length - 1]?.burning ?? 0;
+
+  /**
+   * 「在烧的格子数」—— 明火 + 火星 + 升温 三种状态之和。
+   *
+   * 口径为什么是三个之和，而不是只看 Burning？
+   *   ① 引火源不同，起始状态就不同：雷击/设备直接是 Burning，
+   *      人为点火和烟头是 Ember，篝火是 Heating。
+   *      只看 Burning 的话，选"人为点火"点着了也会显示 0，还是"点了没反应"。
+   *   ② "有没有火"这件事，页面里别处（开始按钮的判断）用的就是这三者之和，
+   *      这里如果换一套口径，就会出现"按开始能跑，但数字显示 0"的矛盾。
+   *
+   * 从**实时 grid** 数，不读快照 —— 原因见下方注释。
+   */
+  const burning = useMemo(() => {
+    const c = countStates(grid, turn);
+    return c.burning + c.ember + c.heating;
+  }, [grid, turn]);
 
   return (
     <main className="mx-auto max-w-[1400px] px-6 py-8">
@@ -775,6 +791,7 @@ export default function FirePage() {  const [params, setParamsState] = useState<
               tool={paintMode ? "paint" : "ignite"}
               onPaint={handlePaint}
               showElevation={showElevation}
+              burning={burning}
             />
 
             {/* 播放控制 */}
@@ -803,7 +820,7 @@ export default function FirePage() {  const [params, setParamsState] = useState<
                 🔄 重置
               </button>
               <span className="ml-auto text-[12.5px] text-ash-500">
-                第 <b className="font-medium text-ash-800">{turn}</b> 轮 · 当前燃烧{" "}
+                第 <b className="font-medium text-ash-800">{turn}</b> 轮 · 正在燃烧{" "}
                 <b className="font-medium text-ember-600">{burning}</b> 格
               </span>
             </div>

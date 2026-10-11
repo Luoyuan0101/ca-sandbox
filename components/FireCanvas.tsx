@@ -31,12 +31,37 @@ interface Props {
    * 换地图、换品种、换尺寸时一起更新，不会出现"图对不上"的情况。
    */
   showElevation?: boolean;
+  /**
+   * 当前燃烧格数。
+   *
+   * 为什么由外面传进来，而不是画布自己数？
+   * 因为"烧了多少格"是**全局统计**，画布只负责画。数格子的活模型层已经做了
+   * （countStates），在这里再数一遍就是第二份真相 —— 两边迟早会对不上。
+   * 全屏时页面上的统计行看不见了，所以得把它搬进浮层。
+   */
+  burning?: number;
 }
 
 const BASE_CELL = 11;
 const MARGIN = 1;
 /** 画布最多铺多宽（px）。地图变大时格子会自动缩小，而不是撑破布局。 */
 const MAX_CANVAS_W = 760;
+
+/**
+ * 全屏时画布可以铺多宽。
+ *
+ * 为什么全屏要单独给一个上限？
+ * ──────────────────────────
+ * 每个格子的基础边长是 `MAX_CANVAS_W / cols`：
+ *   640 / 160 = 4px。
+ * 全屏之后容器宽了一倍多，如果还按 760 算，
+ * 格子大小纹丝不动 —— 屏幕是大了，地图却还是原来那么点，
+ * 四周全是空白。那这个"全屏"就白做了。
+ *
+ * 所以全屏时把基准宽度抬到 1600（≈ 桌面全屏的可用宽度），
+ * 格子跟着变大一倍，整张地图真正铺满屏幕。
+ */
+const MAX_CANVAS_W_FULL = 1600;
 
 /**
  * 放大模式的缩放范围与步长。
@@ -111,10 +136,28 @@ export default function FireCanvas({
   tool = "ignite",
   onPaint,
   showElevation = false,
+  burning = 0,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
+  /**
+   * 全屏容器。全屏的是**它**，不是整个 <body> ——
+   * 这样浮层里可以只放地图和几条必要信息，
+   * 而不是把侧边栏、参数面板一股脑搬上大屏。
+   */
+  const shellRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * 是否处于全屏。
+   *
+   * ⚠️ 这个状态**不能只在按钮里切**。
+   * 用户按 ESC 退出全屏时，浏览器不会经过我们的 onClick，
+   * 于是 state 还停在 true：按钮显示"退出全屏"，实际已经不在全屏了，
+   * 再点一次也不会进全屏（因为 requestFullscreen 又被调用……状态更乱）。
+   * 所以真值来源于 `fullscreenchange` 事件，按钮只负责"请求"。
+   */
+  const [isFull, setIsFull] = useState(false);
 
   /**
    * 放大模式：用户点右下角图标进入；进入后滚轮才改地图大小。
@@ -126,6 +169,60 @@ export default function FireCanvas({
    */
   const [zoomed, setZoomed] = useState(false);
   const [zoom, setZoom] = useState(1);
+
+  /**
+   * 全屏状态的**唯一真值来源**。
+   *
+   * 监听 `fullscreenchange` 而不是在按钮里手动 setState，
+   * 是因为退出全屏有好几条路：点我们的按钮、按 ESC、系统手势。
+   * 后两条不经过 onClick —— 只信事件，才不会出现
+   * "按钮写着退出全屏、其实早就退出了"这种状态错位。
+   *
+   * 顺带处理前缀：Safari 用 webkitFullscreenElement，
+   * 不判断的话在 Mac 上永远读不到"当前全屏元素"，状态就永远是 false。
+   */
+  useEffect(() => {
+    function sync() {
+      const el =
+        document.fullscreenElement ??
+        (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement ??
+        null;
+      setIsFull(el === shellRef.current);
+    }
+    document.addEventListener("fullscreenchange", sync);
+    document.addEventListener("webkitfullscreenchange", sync);
+    return () => {
+      document.removeEventListener("fullscreenchange", sync);
+      document.removeEventListener("webkitfullscreenchange", sync);
+    };
+  }, []);
+
+  /**
+   * 进入 / 退出全屏。
+   *
+   * 注意 requestFullscreen 返回 Promise，用户拒绝或浏览器不允许时会 reject。
+   * 不 catch 的话控制台会冒一条未处理拒绝，而且状态看起来像"点了没反应"。
+   * 这里失败就静默回退 —— 全屏是锦上添花，不该因为失败打断用地图。
+   */
+  const toggleFull = useCallback(() => {
+    const el = shellRef.current as
+      | (HTMLDivElement & { webkitRequestFullscreen?: () => Promise<void> })
+      | null;
+    if (!el) return;
+
+    const doc = document as Document & {
+      webkitExitFullscreen?: () => Promise<void>;
+      webkitFullscreenElement?: Element;
+    };
+
+    if (doc.fullscreenElement ?? doc.webkitFullscreenElement) {
+      const p = doc.exitFullscreen?.() ?? doc.webkitExitFullscreen?.();
+      p?.catch(() => {});
+      return;
+    }
+    const p = el.requestFullscreen?.() ?? el.webkitRequestFullscreen?.();
+    p?.catch(() => {});
+  }, []);
 
   /**
    * 缩放锚点。用 ref 而不是 state —— 它只是「这一帧要滚到哪」的临时便笺，
@@ -140,20 +237,77 @@ export default function FireCanvas({
 
   const { cols, rows } = grid;
 
-  const isZoomMode = useCallback(() => zoomed, [zoomed]);
-  const isZoomModeRef = useRef(isZoomMode);
-  isZoomModeRef.current = isZoomMode;
+  /**
+   * 滚轮是否应该缩放地图。
+   *
+   * 条件是「放大模式 **或** 全屏」，不是只有放大模式。
+   * 为什么全屏也要给？
+   * ──────────────
+   * 全屏本来就是为了"把地图看大"，而全屏里最自然的动作就是滚轮放大看细节。
+   * 只认 zoomed 的话，用户全屏之后滚轮一动不动 ——
+   * 明明在放大模式里滚轮是好用的，到了更大的屏幕上反倒失灵，很违反直觉。
+   *
+   * 为什么不用一个变量把 zoomed 和 isFull 合并？
+   * 因为 zoomed 还管着**别的**事：它决定 CELL 要不要封顶、要不要显示提示条。
+   * 全屏时不封顶的理由和放大模式不同（见 CELL 处注释），
+   * 两个概念只是"恰好都要滚轮"，合并会在别处出错。
+   */
+  const wheelEnabled = zoomed || isFull;
+  const wheelEnabledRef = useRef(wheelEnabled);
+  wheelEnabledRef.current = wheelEnabled;
+
+  /**
+   * 全屏时容器的实际可用宽度。
+   *
+   * 为什么要量，而不是写死 MAX_CANVAS_W_FULL？
+   * ─────────────────────────────────────────
+   * 屏幕宽度千差万别：笔记本 1280、外接 2560、竖屏 900。
+   * 写死一个数只有在那一种宽度上是对的 ——
+   *   写大了：小屏上画布超出视口，横着滚；
+   *   写小了：大屏上地图只占半边，全屏白做了一半。
+   * 所以全屏时读一次真实宽度，用实测值当基准。
+   *
+   * 用 ResizeObserver 而不是 window.resize：
+   * 退出/进入全屏时窗口尺寸未必变（尤其在多显示器下），
+   * 变的是**容器**。观察元素本身才靠得住。
+   */
+  const [fullWidth, setFullWidth] = useState(MAX_CANVAS_W_FULL);
+
+  useEffect(() => {
+    const el = shellRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      const box = entries[0]?.contentRect;
+      if (!box) return;
+      // 留出滚动条和内边距的余量，免得刚好卡出一条横向滚动条
+      setFullWidth(Math.max(320, Math.floor(box.width) - 24));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   /**
    * 每格实际像素：至少 1px，避免大图被缩成 0 宽。
    *
-   * 关键点：放大模式下**不再封顶到 BASE_CELL**。
-   * 160 列时基础值只有 4px，如果还留着封顶，乘 4 倍也只有 16px 却被卡回 11px，
-   * 用户会觉得"滚了没反应"。所以只在非放大模式下封顶。
+   * 三个东西叠在这里，顺序不能反：
+   *   ① 全屏 —— 换一个更大的"画布基准宽度"，让整张图铺满屏幕；
+   *   ② 缩放 —— 在 ① 的结果上再乘 zoom；
+   *   ③ 封顶 —— 只有当"既不放大也不全屏"时才封顶到 BASE_CELL。
+   *
+   * 为什么 ③ 的条件是 `!wheelEnabled` 而不是 `!zoomed`？
+   * 因为全屏时滚轮也能缩放（见 wheelEnabled），
+   * 若这里还写 `!zoomed`，全屏下 zoom 改了却没人读它 ——
+   * 滚轮转了半天，CELL 纹丝不动，又是一个"滚了没反应"。
+   * 只要滚轮能改 zoom，读 zoom 的地方就必须同步放开。
+   *
+   * 为什么基础值要封顶在 BASE_CELL？
+   * 小图（如 160 列）算出来 11px 已经够大，再大只是浪费空间。
+   * 但放大模式下必须解除封顶，否则乘完 zoom 又被压回 11px。
    */
   const CELL = (() => {
-    const base = Math.max(1, Math.min(BASE_CELL, Math.floor(MAX_CANVAS_W / cols)));
-    if (!zoomed) return base;
+    const refW = isFull ? fullWidth : MAX_CANVAS_W;
+    const base = Math.max(1, Math.min(BASE_CELL, Math.floor(refW / cols)));
+    if (!wheelEnabled) return base;
     return Math.max(1, Math.round(base * zoom));
   })();
   // 格子太小（<3px）时不再留缝，否则整张图会发白
@@ -398,9 +552,9 @@ export default function FireCanvas({
    * 缩放的同时整个页面跟着滚，手感极差。
    *
    * 两级判断（对应用户明确提出的第 5 条要求）：
-   *   ① 不在放大模式 → 直接 return，连 preventDefault 都不调，
+   *   ① 既没开放大模式、也不在全屏 → 直接 return，连 preventDefault 都不调，
    *      让浏览器照常滚页面；
-   *   ② 在放大模式 → 吃掉事件，改缩放。
+   *   ② 放大模式 或 全屏 → 吃掉事件，改缩放。
    */
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -408,8 +562,8 @@ export default function FireCanvas({
     if (!canvas || !wrap) return;
 
     function onWheel(e: WheelEvent) {
-      if (!isZoomModeRef.current()) return; // ① 正常模式：什么都不做
-      e.preventDefault(); // ② 放大模式：别让页面跟着一起滚
+      if (!wheelEnabledRef.current) return; // ① 都不在：什么都不做
+      e.preventDefault(); // ② 缩放中：别让页面跟着一起滚
 
       // 上面的 if 已经排除了 null，这里用局部变量收窄一次，
       // 免得在闭包里反复为 TS 解释"它真的不是 null"
@@ -479,11 +633,83 @@ export default function FireCanvas({
   }
 
   const w = cols * CELL;
+  const h = rows * CELL;
   const hint = showElevation
     ? `海拔视图 · 越亮越高 · ${cols}×${rows}`
     : tool === "paint"
       ? `按住拖动刷地形 · ${cols}×${rows}`
       : `点击网格点火 · ${cols}×${rows}`;
+
+  /**
+   * 全屏时右上角的浮层信息 + 退出按钮。
+   *
+   * 为什么全屏里必须留着这些？
+   * ──────────────────────
+   * 全屏之后页面上的图例、轮次、按钮全被挡在外面了，
+   * 只剩一张地图。用户会立刻失去两个关键上下文：
+   *   ① 跑到第几轮了 —— 火势快慢完全靠这个判断；
+   *   ② 怎么退出 —— 全屏最让人慌的就是"退不出去"。
+   * 所以浮层只放这两件事（外加状态色提示），保持克制。
+   */
+  const fullOverlay = (
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex flex-wrap items-start justify-between gap-3 p-3">
+      {/* 左：轮次 + 图例（半透明底，不遮地图） */}
+      <div className="pointer-events-auto flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl bg-white/85 px-3 py-2 shadow-[0_1px_6px_rgba(0,0,0,0.08)] backdrop-blur-sm">
+        {STATE_META.map((s) => (
+          <span key={s.label} className="flex items-center gap-1.5 text-[11.5px] text-ash-600">
+            <span className="inline-block h-2.5 w-2.5 rounded-[3px]" style={{ backgroundColor: s.color }} />
+            {s.label}
+          </span>
+        ))}
+        <span className="flex items-center gap-1.5 text-[11.5px] text-ash-600">
+          <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#2E6FB8]" />
+          消防队
+        </span>
+      </div>
+
+      {/* 右：轮次 + 火情 + 退出 */}
+      <div className="pointer-events-auto flex items-center gap-2 rounded-xl bg-white/85 px-3 py-2 shadow-[0_1px_6px_rgba(0,0,0,0.08)] backdrop-blur-sm">
+        <span className="text-[12px] text-ash-500">
+          第 <b className="font-medium text-ash-800">{turn}</b> 轮
+        </span>
+        <span className="text-ash-300">·</span>
+        {/* 全屏时页面上那行统计看不见了，所以把「当前燃烧」搬进来 ——
+            看火的人最关心的就是这个数字，比轮次还重要 */}
+        <span className="text-[12px] text-ash-500">
+          燃烧 <b className="font-medium text-ember-600">{burning}</b> 格
+        </span>
+        <span className="text-ash-300">·</span>
+        <span className="text-[12px] text-ash-500">
+          <b className="font-medium text-ash-800">{cols}×{rows}</b> 格
+        </span>
+        {zoomed && (
+          <>
+            <span className="text-ash-300">·</span>
+            <span className="text-[12px] text-ash-500">{zoom.toFixed(2)}×</span>
+          </>
+        )}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleFull();
+          }}
+          title="退出全屏（也可以按 Esc）"
+          aria-label="退出全屏"
+          className="ml-1 flex h-7 w-7 items-center justify-center rounded-md border border-[#D6D1C8] bg-white text-[13px] leading-none text-[#5C554D] transition-colors hover:border-[#B8B2A7] hover:text-[#2B2824]"
+        >
+          ⤡
+        </button>
+      </div>
+
+      {/* 底部居中：操作提示。全屏里没有外面的按钮，得自己讲清怎么用 */}
+      <div className="absolute inset-x-0 bottom-3 flex justify-center">
+        <span className="pointer-events-none rounded-lg bg-white/80 px-3 py-1.5 text-[11.5px] text-ash-500 shadow-[0_1px_6px_rgba(0,0,0,0.06)] backdrop-blur-sm">
+          在图上点一下点火 · 滚轮缩放 · 按 <b className="text-ash-700">Esc</b> 退出全屏
+        </span>
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-3">
@@ -525,82 +751,126 @@ export default function FireCanvas({
         <span className="text-[12px] text-ash-400">{hint}</span>
       </div>
 
-      {/* 画布外面套一层相对定位容器，专门用来挂右下角的放大按钮。
-          按钮不能绝对定位挂在更大范围的卡片上 —— 卡片里还有图例和统计行，
-          那样按钮会掉到统计行下面去，就不在"地图的右下角"了。 */}
+      {/* 全屏外壳。全屏的就是这一层 ——
+          它包含"滚动容器 + 右下角按钮 + 全屏浮层"，
+          所以全屏后按钮和浮层都还在，不会因为只全屏 canvas 而丢掉它们。 */}
       <div
-        ref={wrapRef}
+        ref={shellRef}
         className={
-          "relative " +
-          (zoomed
-            ? "max-h-[72vh] overflow-auto rounded-xl bg-[#F3F1ED] [scrollbar-width:thin]"
-            : "")
+          isFull
+            ? "relative flex h-screen w-screen items-center justify-center overflow-hidden bg-[#F3F1ED] p-3"
+            : "relative"
         }
       >
-        <canvas
-          ref={canvasRef}
-          style={{ width: w }}
-          /* `max-w-full` 是为了让地图在小屏上不撑破布局。
-             ⚠️ 但放大模式下这条规则会和缩放**直接对冲**：
-             浏览器会把 4 倍宽的画布硬压回容器宽度，
-             于是"滚轮放大"看起来毫无效果（尺寸其实变了，只是又被压回去了）。
-             这是典型的"代码没错、CSS 在拖后腿"，所以放大时切到 max-w-none。 */
-          className={
-            "cursor-crosshair rounded-xl border border-ash-200 " +
-            (zoomed ? "max-w-none" : "max-w-full")
-          }
-          onMouseDown={(e) => {
-            draggingRef.current = true;
-            handlePos(e);
-          }}
-          onMouseMove={(e) => {
-            if (draggingRef.current) handlePos(e);
-          }}
-          onMouseUp={() => {
-            draggingRef.current = false;
-          }}
-          onMouseLeave={() => {
-            draggingRef.current = false;
-          }}
-        />
+        {/* 画布外面套一层相对定位容器，专门用来挂右下角的放大/全屏按钮。
+            按钮不能绝对定位挂在更大范围的卡片上 —— 卡片里还有图例和统计行，
+            那样按钮会掉到统计行下面去，就不在"地图的右下角"了。
 
-        {/* 右下角放大图标。
-            ⚠️ 它必须在画布**之后**渲染：DOM 顺序决定层叠顺序，
-            放前面会被画布盖住，点不到。 */}
-        <button
-          type="button"
-          title={zoomed ? "退出放大模式" : "放大查看整张地图（滚轮可缩放）"}
-          aria-label={zoomed ? "退出放大模式" : "放大查看整张地图"}
-          aria-pressed={zoomed}
-          onClick={(e) => {
-            // 别让这次点击穿到画布上去点火 —— 那也是"点图"，会点出一个火来
-            e.stopPropagation();
-            setZoomed((v) => !v);
-            setZoom(1); // 退出时复位，免得下次进来还是上次的倍数
-          }}
-          /* 进入放大模式时染成"燃烧色"。这个色**从 STATE_META 动态取**，
-             不写死 —— 否则以后调火焰配色，按钮会独自停在一个旧值上，
-             和它旁边的火苗对不上。上一轮的教训就是"同一件事有两份真相"，
-             这次不从面板色系里复制一份新的。 */
-          style={
-            zoomed
-              ? { backgroundColor: stateColor(CellState.Burning), borderColor: stateColor(CellState.Burning), color: "#fff" }
-              : undefined
-          }
+            全屏时高度用 `calc(100vh - 1.5rem)`：外壳有 p-3（上下各 0.75rem），
+            直接写 max-h-full 会把这层内边距也算进去，画布比屏幕高一点点，
+            于是**白白多出一条纵向滚动条**。显式减掉才对。 */}
+        <div
+          ref={wrapRef}
           className={
-            "absolute bottom-2.5 right-2.5 z-[5] flex h-8 w-8 items-center justify-center " +
-            "rounded-[9px] border text-[15px] leading-none shadow-[0_1px_4px_rgba(0,0,0,0.10)] " +
-            "transition-colors " +
-            (zoomed
-              ? ""
-              : "border-[#D6D1C8] bg-white/90 text-[#5C554D] hover:border-[#B8B2A7] hover:bg-white hover:text-[#2B2824]")
+            "relative " +
+            /* 条件用 wheelEnabled 而不是重写一遍 `zoomed || isFull`：
+               这三处（滚动容器 / max-w-none / 滚轮生效）本质是**同一件事** ——
+               "地图可能比容器大"。写成同一个名字，以后加第三种缩放入口时
+               不会漏改其中一两处。 */
+            (wheelEnabled
+              ? "overflow-auto [scrollbar-width:thin] " +
+                (isFull
+                  ? "max-h-[calc(100vh-1.5rem)] max-w-[calc(100vw-1.5rem)] rounded-xl"
+                  : "max-h-[72vh] rounded-xl bg-[#F3F1ED]")
+              : "")
           }
         >
-          {zoomed ? "⤡" : "⤢"}
-        </button>
+          <canvas
+            ref={canvasRef}
+            style={{ width: w, height: h }}
+            /* `max-w-full` 是为了让地图在小屏上不撑破布局。
+               ⚠️ 但放大模式下这条规则会和缩放**直接对冲**：
+               浏览器会把 4 倍宽的画布硬压回容器宽度，
+               于是"滚轮放大"看起来毫无效果（尺寸其实变了，只是又被压回去了）。
+               这是典型的"代码没错、CSS 在拖后腿"，所以放大时切到 max-w-none。 */
+            className={
+              "cursor-crosshair rounded-xl border border-ash-200 " +
+              (wheelEnabled ? "max-w-none" : "max-w-full")
+            }
+            onMouseDown={(e) => {
+              draggingRef.current = true;
+              handlePos(e);
+            }}
+            onMouseMove={(e) => {
+              if (draggingRef.current) handlePos(e);
+            }}
+            onMouseUp={() => {
+              draggingRef.current = false;
+            }}
+            onMouseLeave={() => {
+              draggingRef.current = false;
+            }}
+          />
+
+          {/* 右下角按钮组：放大 + 全屏。
+              ⚠️ 必须在画布**之后**渲染：DOM 顺序决定层叠顺序，
+              放前面会被画布盖住，点不到。
+              全屏时浮层里已经有退出按钮了，这组就藏起来，避免两个"退出"打架。 */}
+          {!isFull && (
+            <div className="absolute bottom-2.5 right-2.5 z-[5] flex gap-1.5">
+              <button
+                type="button"
+                title={zoomed ? "退出放大模式" : "放大查看整张地图（滚轮可缩放）"}
+                aria-label={zoomed ? "退出放大模式" : "放大查看整张地图"}
+                aria-pressed={zoomed}
+                onClick={(e) => {
+                  // 别让这次点击穿到画布上去点火 —— 那也是"点图"，会点出一个火来
+                  e.stopPropagation();
+                  setZoomed((v) => !v);
+                  setZoom(1); // 退出时复位，免得下次进来还是上次的倍数
+                }}
+                /* 进入放大模式时染成"燃烧色"。这个色**从 STATE_META 动态取**，
+                   不写死 —— 否则以后调火焰配色，按钮会独自停在一个旧值上，
+                   和它旁边的火苗对不上。上一轮的教训就是"同一件事有两份真相"，
+                   这次不从面板色系里复制一份新的。 */
+                style={
+                  zoomed
+                    ? { backgroundColor: stateColor(CellState.Burning), borderColor: stateColor(CellState.Burning), color: "#fff" }
+                    : undefined
+                }
+                className={
+                  "flex h-8 w-8 items-center justify-center rounded-[9px] border " +
+                  "text-[15px] leading-none shadow-[0_1px_4px_rgba(0,0,0,0.10)] transition-colors " +
+                  (zoomed
+                    ? ""
+                    : "border-[#D6D1C8] bg-white/90 text-[#5C554D] hover:border-[#B8B2A7] hover:bg-white hover:text-[#2B2824]")
+                }
+              >
+                {zoomed ? "⤡" : "⤢"}
+              </button>
+
+              <button
+                type="button"
+                title="全屏看地图（大屏 + 滚轮缩放）"
+                aria-label="全屏看地图"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleFull();
+                }}
+                className="flex h-8 w-8 items-center justify-center rounded-[9px] border border-[#D6D1C8] bg-white/90 text-[14px] leading-none text-[#5C554D] shadow-[0_1px_4px_rgba(0,0,0,0.10)] transition-colors hover:border-[#B8B2A7] hover:bg-white hover:text-[#2B2824]"
+              >
+                ⛶
+              </button>
+            </div>
+          )}
+        </div>
+
+        {isFull && fullOverlay}
       </div>
 
-      {zoomed && (
+      {/* 提示条只在"放大模式但没全屏"时显示 ——
+          全屏时浮层底部已经有一句操作提示了，两处都说会显得啰嗦。 */}
+      {zoomed && !isFull && (
         <div className="rounded-lg border border-ash-200 bg-ash-50/70 px-2.5 py-1.5 text-[11.5px] leading-relaxed text-ash-600">
           <b className="text-ash-800">放大模式</b>
           ：滚轮缩放（{ZOOM_MIN}× – {ZOOM_MAX}×，当前 {zoom.toFixed(2)}×）·

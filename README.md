@@ -31,9 +31,11 @@ generate a map → ignite it → watch it spread → read the burned fraction.
   fuel types, moisture, humidity, wind and rain
 - Fire crews with configurable count, arrival delay and tactic
 - Procedural terrain, plus a real-world mode using built-in lat/lon outlines of Eurasia
-- Elevation view, mouse-wheel zoom, adjustable playback speed (0.25×–2×) and fast-forward
+- Elevation view, mouse-wheel zoom, full-screen mode, adjustable playback speed
+  (0.25×–2×) and fast-forward
 - Live statistics chart; export to CSV / JSON / Word / PPT
-- Zero-install single-file demo, deployed to GitHub Pages
+- Entry page with a sandbox picker, plus a self-contained single-file build;
+  the full site is deployed to GitHub Pages
 
 **In progress / planned**
 
@@ -45,9 +47,10 @@ generate a map → ignite it → watch it spread → read the burned fraction.
 
 ## 🔥 在线演示
 
-**https://luoyuan0101.github.io/ca-sandbox/**
+**https://luoyuan0101.github.io/project-ca-fire/**
 
-点开即玩，不用安装任何东西。
+点开即玩，不用安装任何东西。线上跑的是**完整的 Next.js 站点**，
+所以从入口页可以进入火灾沙盒，也能打开传染病占位页。
 
 > 如果打不开或页面空白：GitHub Pages 首次部署需要 1–2 分钟。
 > 到仓库的 **Actions** 标签页看部署进度，跑完了再刷新。
@@ -233,14 +236,11 @@ PPT 里的火势演化曲线是**原生可编辑图表**，双击就能改数据
 
 ### 方式一：在线演示（最快）
 
-直接打开 **https://luoyuan0101.github.io/ca-sandbox/** —— 不用装任何东西。
+直接打开 **https://luoyuan0101.github.io/project-ca-fire/** —— 不用装任何东西。
 
-### 方式二：本地单文件（不用装依赖）
+线上是**完整的 Next.js 站点**：入口页可以二选一，进而进入火灾沙盒或传染病占位页。
 
-`docs/index.html` 是一个**完全自包含**的单文件（模型代码已内联），
-双击就能在浏览器里跑，功能与正式版一致。
-
-### 方式三：完整 Next.js 项目
+### 方式二：完整 Next.js 项目（推荐）
 
 ```bash
 npm install
@@ -251,7 +251,15 @@ npm run dev
 
 > 首次 `npm install` 需要联网下载依赖，命令行窗口别关。
 
-功能跟正式版一致（画布、速度、消防队、地形编辑器、环境参数全套）。
+功能跟线上一致（画布、速度、消防队、地形编辑器、环境参数全套）。
+
+### 方式三：本地单文件（不用装依赖）
+
+`docs/index.html` 是一个**完全自包含**的单文件（模型代码已内联），
+双击就能在浏览器里跑 —— 只有火灾沙盒这一页。
+
+适合**离线使用**或**当附件发给别人**：整个应用就是一个 HTML 文件，
+不依赖服务器、不依赖网络。代价是装不下多页站点（所以到不了入口页和传染病页）。
 
 ---
 
@@ -275,38 +283,63 @@ npm run dev
 ## 项目结构
 
 ```
-ca-sandbox/
+project-ca-fire/
 ├─ lib/
 │  ├─ fireModel.ts      ★ 模型核心：状态机、蔓延概率、消防队、地形生成
 │  ├─ atlas.ts          ★ 真实世界地图：经纬度多边形轮廓 + 点内判定
 │  └─ export.ts           导出 PPT / Word / CSV / JSON
 ├─ components/
-│  ├─ FireCanvas.tsx      Canvas 渲染（4000 格）
+│  ├─ FireCanvas.tsx      Canvas 渲染（含放大 / 全屏模式）
 │  ├─ ControlPanel.tsx    所有参数面板
 │  ├─ MapPanel.tsx      ★ 地图操作台（真实世界 / 随机 / 绘画 / 导入载入）
 │  └─ StatsChart.tsx      手绘 SVG 折线图
 ├─ app/
-│  └─ fire/page.tsx       火灾沙盒主页面
+│  ├─ page.tsx            入口页：二选一（火灾 / 传染病）
+│  ├─ fire/page.tsx       火灾沙盒主页面
+│  └─ disease/page.tsx    传染病沙盒（占位）
 ├─ docs/
-│  └─ index.html          ★ 单文件演示版（GitHub Pages 部署的这个）
+│  └─ index.html          单文件版（自包含，可离线双击打开）
+├─ out/                   静态导出产物（npm run build 生成，不入库）
 ├─ preview/               开发用的零构建版（依赖外部 fireModel.js / atlas.js）
 ├─ scripts/
-│  └─ build-docs.mjs      把 preview/index.html 打成自包含单文件
+│  ├─ build-docs.mjs      把 preview/index.html 打成自包含单文件
+│  └─ serve-export.mjs    本地预览 out/（模拟 GitHub Pages 子路径）
 ├─ plan.md                项目评审（课程任务 3）
 └─ .github/workflows/
-   └─ pages.yml           自动部署到 GitHub Pages
+   └─ pages.yml           构建并部署整站到 GitHub Pages
 ```
 
 想改物理效果 → 只动 `lib/fireModel.ts`。
 想改地图轮廓 → 只动 `lib/atlas.ts`。
-想改界面 → 动 `components/`。
+想改界面 → 动 `components/` 或 `app/`。
 
-> ⚠️ `docs/index.html` 是**把模型内联进来**的单文件版本。
-> 改了 `lib/fireModel.ts` 后，要重新生成它才能在在线演示里生效 —— 见下方说明。
+> ⚠️ `docs/index.html` 是**把模型内联进来**的单文件版本，和整站是两套产物。
+> 改了 `lib/fireModel.ts` 后，如果还想让单文件版保持最新，要重新生成它 —— 见下方说明。
 
 ---
 
-## 更新在线演示
+## 部署
+
+线上是纯静态站点，由 GitHub Actions 自动构建（`.github/workflows/pages.yml`）：
+`npm ci` → `npm run build` → 把 `out/` 上传到 Pages。
+
+两个容易踩的坑，都已经在工作流里处理：
+
+- **basePath**：仓库挂在 `/<repo>/` 子路径下，构建时必须设
+  `PAGES_BASE_PATH=/project-ca-fire`，否则所有 `/_next/...` 资源会 404（少一层路径）。
+- **Pages Source 必须是 `GitHub Actions`**：如果留在 `Deploy from a branch`，
+  它会去跑 Jekyll 渲染 README，而不是用我们的产物 —— 页面看起来"更新了"，
+  其实是另一个东西。改名/转移仓库之后要重新确认一次这个设置。
+
+本地想预览部署效果（含子路径）：
+
+```bash
+npm run build
+node scripts/serve-export.mjs /project-ca-fire
+# → http://localhost:3000/project-ca-fire/
+```
+
+## 更新单文件版（可选）
 
 `docs/index.html` 里内联的是编译后的模型代码（**fireModel + atlas 两份都要**）。改了模型之后：
 
@@ -320,9 +353,8 @@ node scripts/build-docs.mjs
 #    → ✅ 已生成 docs/index.html，外部 import 数量：0
 ```
 
-> 为什么要内联？因为 GitHub Pages 上加载外部 ES 模块时，
-> 某些情况下（尤其是从 GitHub 网页直接预览 `blob` 链接）模块请求会被拦，
-> 脚本整段不执行 → 画布黑屏。内联成单文件后彻底免疫这个问题。
+> 为什么要内联？因为从 GitHub 网页直接预览 `blob` 链接时，
+> 外部 ES 模块请求会被拦，脚本整段不执行 → 画布黑屏。内联成单文件后彻底免疫这个问题。
 >
 > 真要手动核对一遍的话，`docs/index.html` 里应该搜不到任何
 > `import` 语句、`<script src=` 或 `<link href=`。

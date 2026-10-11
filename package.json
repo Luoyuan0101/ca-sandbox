@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "preview:site": "node scripts/serve-export.mjs",
     "lint": "next lint"
   },
   "dependencies": {
