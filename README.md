@@ -47,7 +47,7 @@ generate a map → ignite it → watch it spread → read the burned fraction.
 
 ## 🔥 在线演示
 
-**https://luoyuan0101.github.io/project-ca-fire/**
+**https://rdfz-ai-challenge-2026.github.io/project-ca-fire/**
 
 点开即玩，不用安装任何东西。线上跑的是**完整的 Next.js 站点**，
 所以从入口页可以进入火灾沙盒，也能打开传染病占位页。
@@ -236,7 +236,7 @@ PPT 里的火势演化曲线是**原生可编辑图表**，双击就能改数据
 
 ### 方式一：在线演示（最快）
 
-直接打开 **https://luoyuan0101.github.io/project-ca-fire/** —— 不用装任何东西。
+直接打开 **https://rdfz-ai-challenge-2026.github.io/project-ca-fire/** —— 不用装任何东西。
 
 线上是**完整的 Next.js 站点**：入口页可以二选一，进而进入火灾沙盒或传染病占位页。
 
